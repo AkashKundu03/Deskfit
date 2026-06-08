@@ -7,6 +7,11 @@ final class AppState {
     var report: HealthReport?
     var onboardingComplete: Bool
 
+    /// True when a JWT is present in the Keychain.
+    private(set) var isAuthenticated: Bool = KeychainTokenStore.shared.isAuthenticated
+    /// Set when a best-effort backend sync fails; surfaced gently in the UI.
+    var syncError: String?
+
     private let persistence = PersistenceService()
 
     init() {
@@ -15,6 +20,43 @@ final class AppState {
         self.gutAnswers = p.load(GutAnswers.self, for: .gutAnswers) ?? GutAnswers()
         self.report = p.load(HealthReport.self, for: .healthReport)
         self.onboardingComplete = p.flag(for: .onboardingComplete)
+    }
+
+    func refreshAuthState() {
+        isAuthenticated = KeychainTokenStore.shared.isAuthenticated
+    }
+
+    func signOut() {
+        AuthService().logout()
+        refreshAuthState()
+    }
+
+    /// Best-effort push of local data to the backend. Never blocks report
+    /// generation. On failure it records a friendly message in `syncError`.
+    @MainActor
+    func syncAll() async {
+        guard isAuthenticated else { return }
+        syncError = nil
+        do {
+            try await ProfileSyncService().sync(profile)
+            try await GutAnswersSyncService().sync(gutAnswers)
+            if let report {
+                try await ReportSyncService().sync(report)
+                try await EventSyncService().track("assessment_completed")
+            }
+        } catch {
+            syncError = (error as? LocalizedError)?.errorDescription
+                ?? "We couldn't sync right now. Your report is saved on this device."
+        }
+    }
+
+    /// Called right after a successful social sign-in (before the report exists).
+    /// Refreshes auth state and records the event. The actual data push happens
+    /// later via syncAll() once the report is generated. Best-effort.
+    @MainActor
+    func registerSocialLogin() async {
+        refreshAuthState()
+        try? await EventSyncService().track("social_login_success")
     }
 
     func generateReport() {

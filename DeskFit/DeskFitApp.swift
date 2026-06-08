@@ -6,6 +6,9 @@
 //
 
 import SwiftUI
+#if canImport(GoogleSignIn)
+import GoogleSignIn
+#endif
 
 @main
 struct DeskFitApp: App {
@@ -13,6 +16,13 @@ struct DeskFitApp: App {
         WindowGroup {
             AppRouter()
                 .preferredColorScheme(.dark)
+                // Completes the Google Sign-In OAuth redirect. No-op until the
+                // GoogleSignIn package + reversed-client-id URL scheme are added.
+                .onOpenURL { url in
+                    #if canImport(GoogleSignIn)
+                    GIDSignIn.sharedInstance.handle(url)
+                    #endif
+                }
         }
     }
 }

@@ -14,15 +14,15 @@ struct ReportView: View {
 
                         GlassCard {
                             VStack(spacing: 10) {
-                                row("BMI", String(format: "%.1f", report.bmi))
-                                row("Category", report.bmiCategory)
+                                row("Body weight range", report.bmiCategory)
+                                row("Body mass index", String(format: "%.1f", report.bmi))
                                 divider
-                                row("BMR", "\(Int(report.bmr.rounded())) kcal")
-                                row("TDEE", "\(Int(report.tdee.rounded())) kcal")
+                                row("Calories your body needs at rest", "\(Int(report.bmr.rounded())) kcal")
+                                row("Daily calorie needs", "\(Int(report.tdee.rounded())) kcal")
                                 divider
                                 row("Healthy weight",
                                     String(format: "%.1f – %.1f kg", report.healthyWeightLowKg, report.healthyWeightHighKg))
-                                row("Calorie target",
+                                row("Suggested daily calorie range",
                                     String(format: "%.0f – %.0f kcal", report.calorieTargetLow, report.calorieTargetHigh))
                             }
                         }
@@ -37,7 +37,7 @@ struct ReportView: View {
                                 }
                                 Spacer()
                                 VStack(alignment: .trailing, spacing: 4) {
-                                    Text("Educational gut age").font(.subheadline).foregroundStyle(.white.opacity(0.7))
+                                    Text("Your gut age").font(.subheadline).foregroundStyle(.white.opacity(0.7))
                                     Text("\(report.gutAge) yrs")
                                         .font(.system(.largeTitle, design: .rounded, weight: .bold))
                                         .foregroundStyle(.white)
