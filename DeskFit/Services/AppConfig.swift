@@ -3,24 +3,32 @@ import Foundation
 /// Centralized app configuration. The backend base URL is resolved in ONE place
 /// here — never hardcode it anywhere else. `APIClient` reads `backendBaseURL`.
 ///
-/// How the URL is chosen:
-///   • DEBUG + Simulator  → http://localhost:3000      (your Mac's local backend)
-///   • DEBUG + real iPhone → http://<your Mac LAN IP>:3000  (see `macLANIP` below)
-///   • RELEASE / TestFlight → production VPS            (unchanged — keeps Apple login working)
+/// How the URL is chosen (see `backendBaseURL` below):
+///   • RELEASE / TestFlight / App Store → ALWAYS production VPS.
+///   • DEBUG → controlled by `forceProductionAPIInDebug`:
+///       - true  → production VPS on BOTH Simulator and real iPhone.
+///       - false → Simulator uses localhost, real iPhone uses `macLANIP`.
 ///
-/// Switching environments is automatic by build configuration, so a Release/
-/// TestFlight build can NEVER accidentally point at localhost.
+/// A Release/TestFlight build can NEVER point at localhost or your Mac.
 enum AppConfig {
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 👇 THE ONLY LINE YOU EDIT for real-iPhone local testing.
-    // Set this to your Mac's LAN IP (the iPhone must be on the SAME Wi-Fi).
-    // Find it in Terminal with:   ipconfig getifaddr en0
-    // (Wi-Fi is usually en0; if that's empty try en1.)
-    static let macLANIP = "192.168.1.100"
+    // 👇 PRIMARY SWITCH for Debug builds.
+    // true  → Debug builds (Simulator AND real iPhone) hit the PRODUCTION API.
+    //         Use this to test on your iPhone from Xcode against the live server.
+    // false → Debug builds hit your LOCAL backend (Simulator: localhost,
+    //         real iPhone: `macLANIP`). Use this for local backend development.
+    // (Release/TestFlight ignore this — they always use production.)
+    static let forceProductionAPIInDebug = true
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// Production backend on the VPS. Used for Release / TestFlight builds.
+    // Used only when forceProductionAPIInDebug == false AND running on a real
+    // iPhone in Debug. Set to your Mac's LAN IP (iPhone must be on the SAME Wi-Fi).
+    // Find it in Terminal with:   ipconfig getifaddr en0   (try en1 if en0 is empty).
+    static let macLANIP = "192.168.1.100"
+
+    /// Production backend on the VPS. Used for Release / TestFlight builds, and
+    /// for Debug when `forceProductionAPIInDebug` is true.
     /// NOTE: plain HTTP for now — switch to https://<domain> once TLS is set up.
     static let productionBaseURL = URL(string: "http://45.195.159.233:3000")!
 
@@ -44,12 +52,17 @@ enum AppConfig {
     /// Resolved backend base URL for the current build configuration.
     static let backendBaseURL: URL = {
         #if DEBUG
+            // Debug: honor the primary switch first.
+            if forceProductionAPIInDebug {
+                // Both Simulator and real iPhone hit production (current testing mode).
+                return productionBaseURL
+            }
             #if targetEnvironment(simulator)
-                // Simulator shares the Mac's network, so localhost reaches the local backend.
+                // Local dev on Simulator → localhost reaches your Mac's backend.
                 return URL(string: "http://localhost:3000")!
             #else
-                // Real device in Debug → your Mac on the LAN. iPhone "localhost" is the
-                // iPhone itself, NOT your Mac — so a LAN IP is required here.
+                // Local dev on a real iPhone → your Mac on the LAN. iPhone "localhost"
+                // is the iPhone itself, NOT your Mac — so a LAN IP is required here.
                 return URL(string: "http://\(macLANIP):3000")!
             #endif
         #else
