@@ -1,0 +1,27 @@
+# ── macOS ──
+.DS_Store
+
+# ── Xcode: per-user state (should never be committed) ──
+xcuserdata/
+*.xcuserstate
+*.xcuserdatad
+
+# ── Xcode: build / derived data ──
+build/
+DerivedData/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# ── Swift Package Manager ──
+.build/
+.swiftpm/
+
+# ── CocoaPods (if ever added) ──
+Pods/
+
+# ── Local secrets / config overrides (never commit) ──
+*.local.xcconfig
+Secrets.xcconfig
