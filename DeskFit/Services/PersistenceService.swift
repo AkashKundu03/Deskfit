@@ -5,6 +5,10 @@ enum PersistenceKey: String {
     case gutAnswers
     case healthReport
     case onboardingComplete
+    // Real-user plan caches (NEVER used in demo mode — demo stays in-memory only,
+    // keeping demo data fully separate from real user data).
+    case weeklyPlanCache
+    case mealPlanCache
 }
 
 struct PersistenceService {
@@ -30,7 +34,15 @@ struct PersistenceService {
     }
 
     func clearAll() {
-        for key in [PersistenceKey.userProfile, .gutAnswers, .healthReport, .onboardingComplete] {
+        for key in [PersistenceKey.userProfile, .gutAnswers, .healthReport, .onboardingComplete,
+                    .weeklyPlanCache, .mealPlanCache] {
+            defaults.removeObject(forKey: key.rawValue)
+        }
+    }
+
+    /// Clears only the cached plans (used on logout — keeps profile/report intact).
+    func clearPlanCaches() {
+        for key in [PersistenceKey.weeklyPlanCache, .mealPlanCache] {
             defaults.removeObject(forKey: key.rawValue)
         }
     }

@@ -9,7 +9,11 @@ struct AppRouter: View {
 
     var body: some View {
         Group {
-            if state.onboardingComplete, state.report != nil {
+            if state.requiresAuth {
+                // Logged out from Profile: show the login screen but keep the
+                // saved report/profile so re-login restores the session.
+                AuthView(onFinish: resumeAfterLogin)
+            } else if state.onboardingComplete, state.report != nil {
                 MainTabView()
             } else {
                 switch phase {
@@ -26,9 +30,19 @@ struct AppRouter: View {
         }
         .environment(state)
         .animation(.easeInOut(duration: 0.35), value: state.onboardingComplete)
+        .animation(.easeInOut(duration: 0.35), value: state.requiresAuth)
         .animation(.easeInOut(duration: 0.35), value: phase)
         .onChange(of: state.onboardingComplete) { _, complete in
             if !complete { phase = .splash }
+        }
+    }
+
+    /// After re-login (or "Not now") from the logout gate, return to the app and
+    /// re-sync if a token is now present. The report/profile were never cleared.
+    private func resumeAfterLogin() {
+        state.requiresAuth = false
+        if state.isAuthenticated {
+            Task { await state.syncAll() }
         }
     }
 

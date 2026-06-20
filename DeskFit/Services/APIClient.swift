@@ -54,6 +54,21 @@ struct APIClient {
         _ = try await send(path, method: "PUT", body: body, authorized: authorized)
     }
 
+    /// GET with a decoded response (e.g. fetching the current weekly/meal plan).
+    @discardableResult
+    func get<Response: Decodable>(
+        _ path: String,
+        authorized: Bool = false,
+        as type: Response.Type
+    ) async throws -> Response {
+        let data = try await sendNoBody(path, method: "GET", authorized: authorized)
+        do {
+            return try JSONDecoder().decode(type, from: data)
+        } catch {
+            throw APIError.decoding(error)
+        }
+    }
+
     // MARK: - Core request
 
     @discardableResult
@@ -94,6 +109,42 @@ struct APIClient {
             let message = Self.message(from: data, status: http.statusCode)
             print("[DeskFit API] ✗ \(http.statusCode) \(method) \(urlString) — \(message)")
             throw APIError.server(status: http.statusCode, message: message)
+        }
+        return data
+    }
+
+    /// Core request for verbs without a request body (GET / DELETE).
+    @discardableResult
+    private func sendNoBody(
+        _ path: String,
+        method: String,
+        authorized: Bool
+    ) async throws -> Data {
+        var request = URLRequest(url: APIClient.baseURL.appendingPathComponent(path))
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        if authorized, let token = tokenStore.getToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
+        let urlString = request.url?.absoluteString ?? path
+        print("[DeskFit API] → \(method) \(urlString)")
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            print("[DeskFit API] ✗ \(method) \(urlString) — transport error: \(error.localizedDescription)")
+            throw APIError.transport(error)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+        print("[DeskFit API] ← \(http.statusCode) \(method) \(urlString)")
+        guard (200...299).contains(http.statusCode) else {
+            throw APIError.server(status: http.statusCode, message: Self.message(from: data, status: http.statusCode))
         }
         return data
     }

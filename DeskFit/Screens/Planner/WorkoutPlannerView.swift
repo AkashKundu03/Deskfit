@@ -8,38 +8,48 @@ import SwiftUI
 
 struct WorkoutPlannerView: View {
     var initialFocus: String? = nil
+    /// Notifies Today so it can reflect the freshly generated single workout.
+    var onTodayWorkout: ((GeneratedWorkout) -> Void)? = nil
+    /// Notifies Today so it can reflect the freshly generated weekly plan.
+    var onWeeklyCreated: ((WeeklyWorkoutPlan) -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppState.self) private var state
     private let coach = CoachService()
+    private let plans = PlanService()
 
     @State private var planType: PlanType = .todayOnly
-    @State private var dayCount = 3
+    @State private var selectedWeekdays: Set<String> = ["Mon", "Wed", "Fri"]
     @State private var location: PlannerLocation = .home
-    @State private var time: PlannerTime = .min20
+    @State private var time: PlannerTime = .min30
     @State private var equipment: Set<PlannerEquipment> = [.bodyweight]
     @State private var focus: PlannerFocus = .fatLoss
     @State private var level: PlannerLevel = .beginner
 
     @State private var generating = false
     @State private var result: GeneratedWorkout?
+    @State private var weeklyResult: WeeklyWorkoutPlan?
     @State private var completed = false
 
     var body: some View {
         NavigationStack {
             ZStack {
                 AppBackground()
-                if let result {
+                if let weeklyResult {
+                    weeklyResultView(weeklyResult)
+                } else if let result {
                     resultView(result)
                 } else {
                     formView
                 }
             }
-            .navigationTitle(result == nil ? "Plan your workout" : "Your workout")
+            .navigationTitle(navTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button(result == nil ? "Close" : "Back") {
-                        if result == nil { dismiss() } else { withAnimation { result = nil } }
+                    Button(hasResult ? "Back" : "Close") {
+                        if hasResult { withAnimation { result = nil; weeklyResult = nil } }
+                        else { dismiss() }
                     }
                     .tint(Theme.accent)
                 }
@@ -57,14 +67,9 @@ struct WorkoutPlannerView: View {
                 section("Plan") {
                     segmented(PlanType.allCases, selection: $planType) { $0.label }
                     if planType == .weekly {
-                        HStack {
-                            Text("Days this week").foregroundStyle(.white.opacity(0.8))
-                            Spacer()
-                            Stepper("\(dayCount)", value: $dayCount, in: 1...7)
-                                .labelsHidden()
-                            Text("\(dayCount)").foregroundStyle(.white).monospacedDigit().frame(width: 24)
-                        }
-                        .font(.subheadline)
+                        Text("Pick the days you’ll train — each day gets its own workout.")
+                            .font(.caption2).foregroundStyle(.white.opacity(0.55))
+                        weekdaySelector
                     }
                 }
 
@@ -93,11 +98,12 @@ struct WorkoutPlannerView: View {
                 Button { Task { await generate() } } label: {
                     HStack(spacing: 8) {
                         if generating { ProgressView().tint(.black) }
-                        Text(generating ? "Building…" : "Generate workout")
+                        Text(generating ? "Building…"
+                             : (planType == .weekly ? "Generate week plan" : "Generate workout"))
                     }
                 }
                 .buttonStyle(PillButtonStyle(filled: true))
-                .disabled(generating)
+                .disabled(generating || (planType == .weekly && selectedWeekdays.isEmpty))
                 .padding(.top, 4)
             }
             .padding(20)
@@ -122,10 +128,8 @@ struct WorkoutPlannerView: View {
                             metaChip(w.location.capitalized, "mappin.and.ellipse")
                             metaChip("~\(w.estimatedCalories) kcal", "flame")
                         }
-                        if planType == .weekly {
-                            Text("Added to your week · \(dayCount) day\(dayCount > 1 ? "s" : "")")
-                                .font(.footnote).foregroundStyle(Theme.accent)
-                        }
+                        Text("This becomes today’s workout on your dashboard.")
+                            .font(.footnote).foregroundStyle(Theme.accent)
                     }
                 }
 
@@ -252,6 +256,22 @@ struct WorkoutPlannerView: View {
     private func generate() async {
         generating = true
         let eq = equipment.isEmpty ? ["bodyweight"] : equipment.map { $0.raw }
+
+        if planType == .weekly {
+            let req = CreateWeeklyPlanRequest(
+                selectedDays: Weekdays.order.filter { selectedWeekdays.contains($0) },
+                location: location.raw,
+                durationMin: time.rawValue,
+                equipment: eq,
+                level: level.raw,
+                goal: CoachGoal.from(state.profile.goal).rawValue
+            )
+            let plan = await plans.createWeeklyPlan(req)
+            onWeeklyCreated?(plan)
+            withAnimation { weeklyResult = plan; generating = false }
+            return
+        }
+
         let req = GenerateWorkoutRequest(
             location: location.raw,
             durationMin: time.rawValue,
@@ -261,7 +281,102 @@ struct WorkoutPlannerView: View {
             title: nil
         )
         let w = await coach.generate(req)
+        onTodayWorkout?(w)
         withAnimation { result = w; generating = false; completed = false }
+    }
+
+    // MARK: - Computed
+
+    private var hasResult: Bool { result != nil || weeklyResult != nil }
+    private var navTitle: String {
+        if weeklyResult != nil { return "Your week" }
+        if result != nil { return "Your workout" }
+        return "Plan your workout"
+    }
+
+    // MARK: - Weekday selector
+
+    private var weekdaySelector: some View {
+        HStack(spacing: 8) {
+            ForEach(Weekdays.order, id: \.self) { wd in
+                let on = selectedWeekdays.contains(wd)
+                Button {
+                    if on { selectedWeekdays.remove(wd) } else { selectedWeekdays.insert(wd) }
+                } label: {
+                    Text(wd)
+                        .font(.caption.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(on ? Theme.accent : .white.opacity(0.08))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(.white.opacity(on ? 0 : 0.12), lineWidth: 1)
+                        )
+                        .foregroundStyle(on ? .black : .white)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    // MARK: - Weekly result (grouped by day)
+
+    private func weeklyResultView(_ plan: WeeklyWorkoutPlan) -> some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                GlassCard {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Your week is ready")
+                            .font(.title2.weight(.bold)).foregroundStyle(.white)
+                        Text("\(plan.sessions.count) sessions · each day a distinct workout, spaced for recovery.")
+                            .font(.subheadline).foregroundStyle(.white.opacity(0.75))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                ForEach(plan.sessions) { s in
+                    GlassCard {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Text(Weekdays.full[s.weekday] ?? s.weekday)
+                                    .font(.headline).foregroundStyle(.white)
+                                Spacer()
+                                Text(s.focusLabel)
+                                    .font(.caption.weight(.bold))
+                                    .padding(.horizontal, 10).padding(.vertical, 5)
+                                    .background(Capsule().fill(Theme.accent))
+                                    .foregroundStyle(.black)
+                            }
+                            Text(s.title).font(.title3.weight(.semibold)).foregroundStyle(.white)
+                            HStack(spacing: 8) {
+                                metaChip("\(s.durationMin) min", "clock")
+                                metaChip(s.location.capitalized, "mappin.and.ellipse")
+                                metaChip("~\(s.estimatedCalories) kcal", "flame")
+                            }
+                            ForEach(s.exercises.prefix(3)) { ex in
+                                HStack(spacing: 10) {
+                                    Image(systemName: "circle.fill").font(.system(size: 5)).foregroundStyle(Theme.accent)
+                                    Text(ex.name).font(.subheadline).foregroundStyle(.white.opacity(0.9))
+                                    Spacer()
+                                    Text(ex.detail).font(.caption).foregroundStyle(.white.opacity(0.6)).monospacedDigit()
+                                }
+                            }
+                            if s.exercises.count > 3 {
+                                Text("+ \(s.exercises.count - 3) more")
+                                    .font(.caption2).foregroundStyle(.white.opacity(0.5))
+                            }
+                        }
+                    }
+                }
+
+                Button("Done") { dismiss() }
+                    .buttonStyle(PillButtonStyle(filled: true))
+            }
+            .padding(20)
+        }
     }
 }
 
