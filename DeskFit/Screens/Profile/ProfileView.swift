@@ -4,6 +4,7 @@ struct ProfileView: View {
     @Environment(AppState.self) private var state
     @State private var showResetConfirm = false
     @State private var showLogoutConfirm = false
+    @State private var showReminders = false
 
     var body: some View {
         ZStack {
@@ -13,17 +14,27 @@ struct ProfileView: View {
                 VStack(spacing: 16) {
                     profileHeader
 
+                    accountSyncCard
+                    notificationsCard
                     goalCard
                     bodyCard
                     lifestyleCard
                     preferencesCard
 
-                    // Primary action: Logout (only when signed in).
+                    // Primary action: Logout (only when signed in) — soft danger.
                     if state.isAuthenticated {
                         Button { showLogoutConfirm = true } label: {
                             Label("Log out", systemImage: "rectangle.portrait.and.arrow.right")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 16)
+                                .background(
+                                    Capsule().fill(.ultraThinMaterial)
+                                        .overlay(Capsule().stroke(Theme.danger.opacity(0.55), lineWidth: 1))
+                                )
+                                .foregroundStyle(Theme.danger)
                         }
-                        .buttonStyle(PillButtonStyle(filled: true))
+                        .buttonStyle(.plain)
                         .padding(.top, 8)
                     } else {
                         Button { state.requiresAuth = true } label: {
@@ -50,6 +61,7 @@ struct ProfileView: View {
                 .padding(.bottom, 48)
             }
         }
+        .sheet(isPresented: $showReminders) { ReminderSettingsView() }
         .confirmationDialog("Log out?", isPresented: $showLogoutConfirm, titleVisibility: .visible) {
             Button("Log out", role: .destructive) { state.signOut() }
             Button("Cancel", role: .cancel) {}
@@ -69,12 +81,13 @@ struct ProfileView: View {
     private var profileHeader: some View {
         VStack(spacing: 8) {
             Circle()
-                .fill(Theme.accent.opacity(0.85))
+                .fill(Theme.primaryButtonGradient)
                 .frame(width: 88, height: 88)
+                .shadow(color: Theme.primaryAccent.opacity(0.45), radius: 14, y: 6)
                 .overlay(
                     Text(initials)
                         .font(.system(size: 36, weight: .bold, design: .rounded))
-                        .foregroundStyle(.black)
+                        .foregroundStyle(Theme.onAccent)
                 )
             Text(state.profile.name.isEmpty ? "Welcome" : state.profile.name)
                 .font(.title.weight(.semibold)).foregroundStyle(.white)
@@ -87,6 +100,76 @@ struct ProfileView: View {
             .foregroundStyle(.white.opacity(0.7))
         }
         .padding(.top, 16)
+    }
+
+    // MARK: - Account & Sync
+
+    private var accountSyncCard: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 12) {
+                cardHeader("Account & Sync", "icloud")
+                if state.isAuthenticated {
+                    syncRow("Signed in with Apple", systemImage: "apple.logo", value: "")
+                    syncRow("Sync", systemImage: "arrow.triangle.2.circlepath", value: "Enabled")
+                    syncRow("Last synced", systemImage: "clock", value: lastSyncedText, neutral: true)
+                } else {
+                    HStack(spacing: 10) {
+                        Image(systemName: "iphone")
+                            .foregroundStyle(Theme.accent)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Guest mode").font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                            Text("Your data stays on this device. Sign in to sync across devices.")
+                                .font(.caption).foregroundStyle(.white.opacity(0.65))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var notificationsCard: some View {
+        Button { showReminders = true } label: {
+            GlassCard {
+                HStack(spacing: 12) {
+                    Image(systemName: "bell.badge.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                        .frame(width: 30, height: 30)
+                        .background(Theme.accent.opacity(0.15), in: Circle())
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Notifications & reminders")
+                            .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                        Text("Workout and meal reminders").font(.caption).foregroundStyle(.white.opacity(0.6))
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.white.opacity(0.4))
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var lastSyncedText: String {
+        guard let date = state.lastSyncedAt else { return "Just now" }
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        return f.localizedString(for: date, relativeTo: Date())
+    }
+
+    private func syncRow(_ title: String, systemImage: String, value: String, neutral: Bool = false) -> some View {
+        HStack {
+            Label(title, systemImage: systemImage)
+                .font(.subheadline).foregroundStyle(.white.opacity(0.85))
+            Spacer()
+            if !value.isEmpty {
+                // Positive status reads green; neutral metadata stays subtle.
+                Text(value).font(.subheadline.weight(.semibold))
+                    .foregroundStyle(neutral ? Theme.textSecondary : Theme.success)
+            } else {
+                Image(systemName: "checkmark.seal.fill").foregroundStyle(Theme.success)
+            }
+        }
     }
 
     // MARK: - Cards

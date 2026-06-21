@@ -1,19 +1,30 @@
 import SwiftUI
 import AuthenticationServices
 
-/// Premium full-screen social sign-in step. Shown after the assessment and
-/// before the report. Email/password is hidden from normal users and only
-/// reachable via a long-press debug gesture on the footer.
+/// Account-choice screen: Continue with Apple (the real account system) or
+/// continue without an account. Google sign-in has been removed entirely.
+///
+/// Used in two places:
+///  • Launch flow, after the intro — the user picks how to proceed.
+///  • Re-login gate after logout — `onGuest` resumes without re-syncing.
+///
+/// Apple sign-in mechanics live here; the *outcome* (backend hydrated, needs
+/// questionnaire, conflict, …) is handed to `onAppleOutcome` for the caller to
+/// route. Email/password stays hidden behind a long-press debug gesture.
 struct AuthView: View {
     @Environment(AppState.self) private var state
 
-    /// Called after a successful sign-in OR when the user taps "Not now".
-    /// The caller proceeds to generate and show the report either way.
-    var onFinish: () -> Void
+    var title: String = "Save your progress."
+    var subtitle: String = "Sign in with Apple to save your plan, sync across devices, and pick up where you left off."
+    var guestTitle: String = "Continue without account"
+    var guestNote: String? = "Your data stays on this device until you sign in."
 
-    private enum Provider { case apple, google }
+    /// Called with the resolved outcome after a successful Apple (or dev) sign-in.
+    var onAppleOutcome: (AppState.AppleSignInOutcome) -> Void
+    /// Called when the user taps the guest / "Not now" action.
+    var onGuest: () -> Void
 
-    @State private var working: Provider?
+    @State private var working = false
     @State private var errorMessage: String?
     @State private var appear = false
     @State private var showDevLogin = false
@@ -34,11 +45,11 @@ struct AuthView: View {
                     .opacity(appear ? 1 : 0)
 
                 VStack(spacing: 12) {
-                    Text("Save your health journey.")
+                    Text(title)
                         .font(.system(size: 30, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
                         .multilineTextAlignment(.center)
-                    Text("Your report, progress, and daily wellness journey stay synced securely across devices.")
+                    Text(subtitle)
                         .font(.subheadline)
                         .foregroundStyle(.white.opacity(0.72))
                         .multilineTextAlignment(.center)
@@ -59,20 +70,24 @@ struct AuthView: View {
 
                 Spacer()
 
-                VStack(spacing: 12) {
-                    socialButton(title: "Continue with Apple", systemImage: "apple.logo",
-                                 isBusy: working == .apple, action: handleApple)
-                    socialButton(title: "Continue with Google", systemImage: "globe",
-                                 isBusy: working == .google, action: handleGoogle)
-                }
-                .disabled(working != nil)
-                .padding(.horizontal, 24)
+                VStack(spacing: 10) {
+                    appleButton
+                        .padding(.horizontal, 24)
 
-                Button("Not now") { onFinish() }
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.7))
-                    .padding(.top, 16)
-                    .disabled(working != nil)
+                    Button(guestTitle) { onGuest() }
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.white.opacity(0.7))
+                        .padding(.top, 10)
+                        .disabled(working)
+
+                    if let guestNote {
+                        Text(guestNote)
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.45))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
+                    }
+                }
 
                 termsFooter
                     .padding(.top, 14)
@@ -82,6 +97,26 @@ struct AuthView: View {
         .preferredColorScheme(.dark)
         .onAppear { withAnimation(.easeOut(duration: 0.6)) { appear = true } }
         .sheet(isPresented: $showDevLogin) { devLoginSheet }
+    }
+
+    // MARK: - Apple button (SF Symbol: apple.logo)
+
+    private var appleButton: some View {
+        Button(action: handleApple) {
+            HStack(spacing: 10) {
+                if working {
+                    ProgressView().tint(.black)
+                } else {
+                    Image(systemName: "apple.logo").font(.system(size: 18, weight: .medium))
+                }
+                Text("Continue with Apple").font(.headline)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+            .background(Capsule().fill(.white))
+            .foregroundStyle(.black)
+        }
+        .disabled(working)
     }
 
     // MARK: - Pieces
@@ -114,23 +149,6 @@ struct AuthView: View {
         .frame(height: 240)
     }
 
-    private func socialButton(title: String, systemImage: String, isBusy: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                if isBusy {
-                    ProgressView().tint(.black)
-                } else {
-                    Image(systemName: systemImage).font(.system(size: 18, weight: .medium))
-                }
-                Text(title).font(.headline)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 16)
-            .background(Capsule().fill(.white))
-            .foregroundStyle(.black)
-        }
-    }
-
     private var termsFooter: some View {
         (
             Text("By continuing, you agree to ").foregroundStyle(.white.opacity(0.5))
@@ -149,7 +167,7 @@ struct AuthView: View {
 
     private func handleApple() {
         errorMessage = nil
-        working = .apple
+        working = true
         Task {
             do {
                 let result = try await appleCoordinator.signIn()
@@ -157,33 +175,18 @@ struct AuthView: View {
                     identityToken: result.identityToken,
                     email: result.email,
                     fullName: result.fullName)
-                await state.registerSocialLogin()
-                working = nil
-                onFinish()
+                let outcome = await state.handleAppleSignIn()
+                working = false
+                Haptics.success()
+                if case .error(let msg) = outcome { errorMessage = msg }
+                onAppleOutcome(outcome)
             } catch {
                 if let authError = error as? ASAuthorizationError, authError.code == .canceled {
-                    working = nil
+                    working = false
                     return
                 }
                 errorMessage = (error as? LocalizedError)?.errorDescription ?? "Apple sign-in failed."
-                working = nil
-            }
-        }
-    }
-
-    private func handleGoogle() {
-        errorMessage = nil
-        working = .google
-        Task {
-            do {
-                let idToken = try await GoogleSignInHelper.signIn()
-                try await auth.signInWithGoogle(idToken: idToken)
-                await state.registerSocialLogin()
-                working = nil
-                onFinish()
-            } catch {
-                errorMessage = (error as? LocalizedError)?.errorDescription ?? "Google sign-in failed."
-                working = nil
+                working = false
             }
         }
     }
@@ -192,9 +195,9 @@ struct AuthView: View {
 
     private var devLoginSheet: some View {
         DevEmailLoginView(auth: auth) {
-            await state.registerSocialLogin()
+            let outcome = await state.handleAppleSignIn()
             showDevLogin = false
-            onFinish()
+            onAppleOutcome(outcome)
         }
         .environment(state)
     }

@@ -94,7 +94,7 @@ struct MealPlannerView: View {
 
                 Button { Task { await generate() } } label: {
                     HStack(spacing: 8) {
-                        if generating { ProgressView().tint(.black) }
+                        if generating { ProgressView().tint(Theme.onAccent) }
                         Text(generating ? "Building…" : "Generate meal targets")
                     }
                 }
@@ -184,7 +184,7 @@ struct MealPlannerView: View {
                             .fill(selected(item) ? Theme.accent : .white.opacity(0.08)))
                         .overlay(RoundedRectangle(cornerRadius: 14)
                             .stroke(.white.opacity(selected(item) ? 0 : 0.12), lineWidth: 1))
-                        .foregroundStyle(selected(item) ? .black : .white)
+                        .foregroundStyle(selected(item) ? Theme.onAccent : .white)
                 }
                 .buttonStyle(.plain)
             }
@@ -202,7 +202,7 @@ struct MealPlannerView: View {
                         .padding(.vertical, 10)
                         .background(RoundedRectangle(cornerRadius: 12)
                             .fill(selected(item) ? Theme.accent : .white.opacity(0.08)))
-                        .foregroundStyle(selected(item) ? .black : .white)
+                        .foregroundStyle(selected(item) ? Theme.onAccent : .white)
                 }
                 .buttonStyle(.plain)
             }

@@ -97,7 +97,7 @@ struct WorkoutPlannerView: View {
 
                 Button { Task { await generate() } } label: {
                     HStack(spacing: 8) {
-                        if generating { ProgressView().tint(.black) }
+                        if generating { ProgressView().tint(Theme.onAccent) }
                         Text(generating ? "Building…"
                              : (planType == .weekly ? "Generate week plan" : "Generate workout"))
                     }
@@ -121,7 +121,7 @@ struct WorkoutPlannerView: View {
                             .font(.caption.weight(.bold))
                             .padding(.horizontal, 12).padding(.vertical, 6)
                             .background(Capsule().fill(Theme.accent))
-                            .foregroundStyle(.black)
+                            .foregroundStyle(Theme.onAccent)
                         Text(w.title).font(.title2.weight(.bold)).foregroundStyle(.white)
                         HStack(spacing: 8) {
                             metaChip("\(w.durationMin) min", "clock")
@@ -211,7 +211,7 @@ struct WorkoutPlannerView: View {
                             RoundedRectangle(cornerRadius: 14)
                                 .stroke(.white.opacity(isSelected(item) ? 0 : 0.12), lineWidth: 1)
                         )
-                        .foregroundStyle(isSelected(item) ? .black : .white)
+                        .foregroundStyle(isSelected(item) ? Theme.onAccent : .white)
                 }
                 .buttonStyle(.plain)
             }
@@ -231,7 +231,7 @@ struct WorkoutPlannerView: View {
                             RoundedRectangle(cornerRadius: 12)
                                 .fill(selection.wrappedValue.id == item.id ? Theme.accent : .white.opacity(0.08))
                         )
-                        .foregroundStyle(selection.wrappedValue.id == item.id ? .black : .white)
+                        .foregroundStyle(selection.wrappedValue.id == item.id ? Theme.onAccent : .white)
                 }
                 .buttonStyle(.plain)
             }
@@ -301,6 +301,7 @@ struct WorkoutPlannerView: View {
             ForEach(Weekdays.order, id: \.self) { wd in
                 let on = selectedWeekdays.contains(wd)
                 Button {
+                    Haptics.selection()
                     if on { selectedWeekdays.remove(wd) } else { selectedWeekdays.insert(wd) }
                 } label: {
                     Text(wd)
@@ -309,15 +310,18 @@ struct WorkoutPlannerView: View {
                         .padding(.vertical, 12)
                         .background(
                             RoundedRectangle(cornerRadius: 12)
-                                .fill(on ? Theme.accent : .white.opacity(0.08))
+                                .fill(on ? AnyShapeStyle(Theme.primaryButtonGradient) : AnyShapeStyle(.white.opacity(0.08)))
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 12)
                                 .stroke(.white.opacity(on ? 0 : 0.12), lineWidth: 1)
                         )
-                        .foregroundStyle(on ? .black : .white)
+                        .foregroundStyle(on ? Theme.onAccent : .white)
+                        .scaleEffect(on ? 1.06 : 1)
+                        .shadow(color: on ? Theme.primaryAccent.opacity(0.5) : .clear, radius: 8)
                 }
                 .buttonStyle(.plain)
+                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: on)
             }
         }
     }
@@ -348,7 +352,7 @@ struct WorkoutPlannerView: View {
                                     .font(.caption.weight(.bold))
                                     .padding(.horizontal, 10).padding(.vertical, 5)
                                     .background(Capsule().fill(Theme.accent))
-                                    .foregroundStyle(.black)
+                                    .foregroundStyle(Theme.onAccent)
                             }
                             Text(s.title).font(.title3.weight(.semibold)).foregroundStyle(.white)
                             HStack(spacing: 8) {

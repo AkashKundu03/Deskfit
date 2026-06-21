@@ -9,13 +9,33 @@ final class AppState {
 
     /// True when a JWT is present in the Keychain.
     private(set) var isAuthenticated: Bool = KeychainTokenStore.shared.isAuthenticated
-    /// Drives the login gate: set true on logout so the router shows AuthView
-    /// without discarding the on-device report/profile.
+    /// True when the user explicitly chose "Continue without account". Their data
+    /// stays on-device only; premium generation is gated behind sign-in.
+    private(set) var isGuest: Bool = false
+    /// While true, the router shows the splash; we're resolving backend state.
+    private(set) var isBootstrapping = true
+    /// Drives the login gate: set true on logout so the router shows the sign-in
+    /// screen without discarding the on-device report/profile.
     var requiresAuth: Bool = false
     /// Set when a best-effort backend sync fails; surfaced gently in the UI.
     var syncError: String?
+    /// Timestamp of the last successful backend sync (for the Account & Sync card).
+    var lastSyncedAt: Date?
+
+    /// Backend snapshot fetched during an Apple sign-in, held so a conflict
+    /// resolution ("Use Apple account profile") can hydrate from it.
+    private var pendingBackendMe: MeResponse?
 
     private let persistence = PersistenceService()
+
+    /// Outcome of an Apple sign-in, used by the UI to route / show conflict UI.
+    enum AppleSignInOutcome: Equatable {
+        case loadedBackend          // backend had an assessment → hydrated, go to app
+        case noBackendNeedsAssessment // brand-new account, no local data → questionnaire
+        case offerSaveLocal         // backend empty, local assessment exists → offer save
+        case conflict               // both backend and local have an assessment
+        case error(String)
+    }
 
     init() {
         let p = PersistenceService()
@@ -23,10 +43,120 @@ final class AppState {
         self.gutAnswers = p.load(GutAnswers.self, for: .gutAnswers) ?? GutAnswers()
         self.report = p.load(HealthReport.self, for: .healthReport)
         self.onboardingComplete = p.flag(for: .onboardingComplete)
+        self.isGuest = p.flag(for: .guestMode)
     }
 
     func refreshAuthState() {
         isAuthenticated = KeychainTokenStore.shared.isAuthenticated
+    }
+
+    /// True once the user has an assessment on this device.
+    var hasLocalAssessment: Bool {
+        onboardingComplete && report != nil
+    }
+
+    // MARK: - Launch bootstrap
+
+    /// Resolve the right launch destination. If a token exists, pull the backend
+    /// account so a returning Apple user on a fresh device skips the questionnaire.
+    @MainActor
+    func bootstrap() async {
+        refreshAuthState()
+        // Show the brand splash for a beat regardless of how fast the fetch is.
+        async let minSplash: Void = Task.sleep(nanoseconds: 1_300_000_000)
+        if isAuthenticated {
+            do {
+                let me = try await MeService().fetchMe()
+                if me.hasAssessment {
+                    hydrate(from: me)
+                }
+            } catch {
+                // Offline / transient: fall back to whatever is cached on-device.
+            }
+        }
+        try? await minSplash
+        isBootstrapping = false
+    }
+
+    // MARK: - Account mode
+
+    /// User tapped "Continue without account". Data stays local-only.
+    func continueAsGuest() {
+        isGuest = true
+        persistence.setFlag(true, for: .guestMode)
+    }
+
+    /// Hydrate local models + report from a backend snapshot and mark onboarding
+    /// complete. Backend data wins — used on launch and "Use Apple account profile".
+    @MainActor
+    func hydrate(from me: MeResponse) {
+        if let p = me.profile { profile = p.toUserProfile() }
+        if let g = me.gutAnswers { gutAnswers = g.toGutAnswers() }
+        if let r = me.report?.toHealthReport() {
+            report = r
+            onboardingComplete = true
+        }
+        isGuest = false
+        persistence.setFlag(false, for: .guestMode)
+        persistAll()
+    }
+
+    // MARK: - Apple sign-in handling (incl. guest upgrade & conflict)
+
+    /// Called after a successful Apple sign-in. Decides whether backend data wins,
+    /// whether to offer saving the local assessment, or whether there's a conflict.
+    @MainActor
+    func handleAppleSignIn() async -> AppleSignInOutcome {
+        refreshAuthState()
+        isGuest = false
+        persistence.setFlag(false, for: .guestMode)
+        try? await EventSyncService().track("social_login_success")
+
+        let localExists = hasLocalAssessment
+        do {
+            let me = try await MeService().fetchMe()
+            pendingBackendMe = me
+            switch (me.hasAssessment, localExists) {
+            case (true, true):
+                return .conflict                      // let the user choose
+            case (true, false):
+                hydrate(from: me)
+                return .loadedBackend
+            case (false, true):
+                return .offerSaveLocal
+            case (false, false):
+                return .noBackendNeedsAssessment
+            }
+        } catch {
+            // Couldn't reach backend. Never overwrite remote data on uncertainty.
+            if localExists { return .offerSaveLocal }
+            return .noBackendNeedsAssessment
+        }
+    }
+
+    /// Conflict resolution / explicit choice: keep the backend's profile.
+    @MainActor
+    func useBackendProfile() {
+        if let me = pendingBackendMe { hydrate(from: me) }
+        pendingBackendMe = nil
+    }
+
+    /// Conflict resolution / "save this assessment": push local data to the
+    /// account. Additive PUT — never deletes backend rows. Best-effort.
+    @MainActor
+    func uploadLocalAssessment() async {
+        pendingBackendMe = nil
+        guard isAuthenticated else { return }
+        // Ensure a report exists so the account is fully populated.
+        if report == nil { generateReport() }
+        syncError = nil
+        do {
+            try await MeService().uploadAssessment(profile: profile, gut: gutAnswers, report: report)
+            lastSyncedAt = Date()
+        } catch {
+            syncError = (error as? LocalizedError)?.errorDescription
+                ?? "We couldn't sync right now. Your data is saved on this device."
+        }
     }
 
     /// Logs out: clears the JWT and cached real-user plans, then routes to the
@@ -52,6 +182,7 @@ final class AppState {
                 try await ReportSyncService().sync(report)
                 try await EventSyncService().track("assessment_completed")
             }
+            lastSyncedAt = Date()
         } catch {
             syncError = (error as? LocalizedError)?.errorDescription
                 ?? "We couldn't sync right now. Your report is saved on this device."

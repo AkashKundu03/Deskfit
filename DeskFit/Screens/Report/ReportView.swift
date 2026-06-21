@@ -8,6 +8,15 @@ import SwiftUI
 
 struct ReportView: View {
     @Environment(AppState.self) private var state
+    private let plans = PlanService()
+
+    @State private var weeklyPlan: WeeklyWorkoutPlan?
+    @State private var mealPlan: MealPlanResult?
+
+    private var projection: ProgressProjection {
+        ProgressProjection.make(profile: state.profile, report: state.report,
+                                weeklyPlan: weeklyPlan, mealPlan: mealPlan)
+    }
 
     var body: some View {
         ZStack {
@@ -19,6 +28,8 @@ struct ReportView: View {
                         header
 
                         coachIntroCard(report)
+                        progressCard
+                        nextActionCard
                         foodTargetCard(report)
                         weightRangeCard(report)
                         prioritiesCard(report)
@@ -39,6 +50,13 @@ struct ReportView: View {
                     .foregroundStyle(.white.opacity(0.8))
             }
         }
+        .task { await loadPlans() }
+    }
+
+    private func loadPlans() async {
+        let plan = await plans.currentWeeklyPlan()
+        let meals = await plans.currentMealPlan()
+        withAnimation { weeklyPlan = plan; mealPlan = meals }
     }
 
     private var header: some View {
@@ -47,6 +65,33 @@ struct ReportView: View {
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, 16)
+    }
+
+    // MARK: - Progress
+
+    private var progressCard: some View {
+        GlassCard {
+            ProgressChartView(projection: projection)
+        }
+    }
+
+    private var nextActionCard: some View {
+        GlassCard {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: 30, height: 30)
+                    .background(Theme.accent.opacity(0.15), in: Circle())
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Your next best step")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(.white.opacity(0.7))
+                    Text(projection.nextBestAction)
+                        .font(.callout).foregroundStyle(.white)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
     }
 
     // MARK: - Cards

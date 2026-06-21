@@ -27,6 +27,13 @@ struct TodayView: View {
     @State private var banner: String?
     @State private var showAdjust = false
 
+    // Engagement: sign-in gate for guests, celebration + reminders.
+    @State private var showSignInGate = false
+    @State private var pendingPremiumAction: (() -> Void)?
+    @State private var confettiTrigger = 0
+    @State private var showWorkoutReminders = false
+    @State private var showMealReminders = false
+
     var body: some View {
         ZStack(alignment: .bottom) {
             AppBackground()
@@ -64,17 +71,24 @@ struct TodayView: View {
         .sheet(isPresented: $showPlanner, onDismiss: { Task { await reloadPlans() } }) {
             WorkoutPlannerView(
                 initialFocus: today?.workout.focus,
-                onTodayWorkout: { gw in generatedWorkout = gw; workoutDone = false },
+                onTodayWorkout: { gw in
+                    generatedWorkout = gw; workoutDone = false
+                    Haptics.impact()
+                },
                 onWeeklyCreated: { plan in
                     weeklyPlan = plan
                     generatedWorkout = nil
+                    Haptics.impact()
                     flash("Your week is set — \(plan.sessions.count) sessions ready.")
                 }
             )
         }
         .sheet(isPresented: $showMealPlanner) {
             if let t = today {
-                MealPlannerView(targets: t.nutrition, onCreated: { mp in mealPlan = mp })
+                MealPlannerView(targets: t.nutrition, onCreated: { mp in
+                    mealPlan = mp
+                    Haptics.impact()
+                })
             }
         }
         .sheet(item: $rescheduleSession) { session in
@@ -88,6 +102,66 @@ struct TodayView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
+        .sheet(isPresented: $showSignInGate, onDismiss: runPendingPremiumActionIfAuthed) {
+            SignInGateView(onAuthenticated: {}).environment(state)
+        }
+        .sheet(isPresented: $showWorkoutReminders) {
+            ReminderSettingsView(kinds: [.workout])
+        }
+        .sheet(isPresented: $showMealReminders) {
+            ReminderSettingsView(kinds: [.breakfast, .lunch, .dinner])
+        }
+        .celebration(trigger: confettiTrigger)
+    }
+
+    // MARK: - Premium gating (guests get a sign-in gate)
+
+    /// Run a premium action if entitled; otherwise present the sign-in gate and
+    /// resume the action after a successful sign-in.
+    private func requirePlanAccess(_ action: @escaping () -> Void) {
+        switch EntitlementService.shared.planAccess(isAuthenticated: state.isAuthenticated) {
+        case .allowed, .needsSubscription:
+            // Internal/TestFlight: subscription placeholder is active, so don't
+            // block testing. Real IAP gating will branch on .needsSubscription.
+            action()
+        case .needsSignIn:
+            pendingPremiumAction = action
+            showSignInGate = true
+        }
+    }
+
+    private func runPendingPremiumActionIfAuthed() {
+        guard state.isAuthenticated, let action = pendingPremiumAction else {
+            pendingPremiumAction = nil
+            return
+        }
+        pendingPremiumAction = nil
+        // Small delay so the gate sheet finishes dismissing before the next sheet.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { action() }
+    }
+
+    private func openPlanner() { requirePlanAccess { showPlanner = true } }
+    private func openMealPlanner() { requirePlanAccess { showMealPlanner = true } }
+
+    private func celebrate() {
+        Haptics.success()
+        confettiTrigger += 1
+    }
+
+    /// "Remind me" for the workout — opens the workout reminder scheduler.
+    private var remindMeButton: some View {
+        Button { showWorkoutReminders = true } label: {
+            Label("Remind me", systemImage: "bell")
+        }
+        .buttonStyle(PillButtonStyle(filled: false))
+    }
+
+    /// "Set meal reminders" for the meal card.
+    private var mealRemindersButton: some View {
+        Button { showMealReminders = true } label: {
+            Label("Set meal reminders", systemImage: "bell")
+        }
+        .buttonStyle(PillButtonStyle(filled: false))
     }
 
     private let adjustOptions: [(String, String)] = [
@@ -113,7 +187,7 @@ struct TodayView: View {
                     .background(
                         Capsule().fill(AppConfig.useDemoData ? Theme.accent.opacity(0.9) : .white.opacity(0.10))
                     )
-                    .foregroundStyle(AppConfig.useDemoData ? .black : .white.opacity(0.8))
+                    .foregroundStyle(AppConfig.useDemoData ? .white : .white.opacity(0.8))
                     .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 1))
             }
         }
@@ -197,7 +271,7 @@ struct TodayView: View {
                     if s.status == "completed" {
                         Label("Completed", systemImage: "checkmark.circle.fill")
                             .frame(maxWidth: .infinity).padding(.vertical, 14)
-                            .background(Capsule().fill(Theme.accent.opacity(0.18)))
+                            .background(Capsule().fill(Theme.success.opacity(0.18)))
                             .foregroundStyle(Theme.accent)
                     } else {
                         Button {
@@ -207,7 +281,8 @@ struct TodayView: View {
                         Button { rescheduleSession = s } label: { Text("Skip / Reschedule") }
                             .buttonStyle(PillButtonStyle(filled: false))
                     }
-                    Button { showPlanner = true } label: { Text("Regenerate / change") }
+                    remindMeButton
+                    Button { openPlanner() } label: { Text("Regenerate / change") }
                         .buttonStyle(PillButtonStyle(filled: false))
                 }
                 .padding(.top, 4)
@@ -225,8 +300,9 @@ struct TodayView: View {
                 Text("Optional 10-minute reset: a short walk, a few mobility flows, and easy breathing. Recovery is where progress sticks.")
                     .font(.footnote).foregroundStyle(.white.opacity(0.7))
                     .fixedSize(horizontal: false, vertical: true)
-                Button { showPlanner = true } label: { Text("Add a workout today") }
+                Button { openPlanner() } label: { Text("Add a workout today") }
                     .buttonStyle(PillButtonStyle(filled: true))
+                remindMeButton
             }
         }
     }
@@ -256,13 +332,15 @@ struct TodayView: View {
                 VStack(spacing: 10) {
                     Button {
                         workoutDone = true
+                        celebrate()
                         flash("Nice work — that’s another day your body and focus will thank you for.")
                     } label: {
                         Label(workoutDone ? "Completed" : "Mark completed",
                               systemImage: workoutDone ? "checkmark.circle.fill" : "checkmark.circle")
                     }
                     .buttonStyle(PillButtonStyle(filled: true)).disabled(workoutDone)
-                    Button { showPlanner = true } label: { Text("Generate another") }
+                    remindMeButton
+                    Button { openPlanner() } label: { Text("Generate another") }
                         .buttonStyle(PillButtonStyle(filled: false))
                 }
                 .padding(.top, 4)
@@ -293,11 +371,12 @@ struct TodayView: View {
                 }
                 Text(t.workout.coachNote).font(.footnote).italic().foregroundStyle(.white.opacity(0.7))
                 VStack(spacing: 10) {
-                    Button { showPlanner = true } label: { Text("Generate today’s workout") }
+                    Button { openPlanner() } label: { Text("Generate today’s workout") }
                         .buttonStyle(PillButtonStyle(filled: true))
                     HStack(spacing: 10) {
                         Button {
                             workoutDone = true
+                            celebrate()
                             flash("Nice work — that’s another day your body and focus will thank you for.")
                         } label: {
                             Label(workoutDone ? "Completed" : "Mark completed",
@@ -307,6 +386,7 @@ struct TodayView: View {
                         Button { showAdjust = true } label: { Text("Skip / Adjust") }
                             .buttonStyle(PillButtonStyle(filled: false))
                     }
+                    remindMeButton
                 }
                 .padding(.top, 4)
             }
@@ -350,9 +430,9 @@ struct TodayView: View {
                 }
 
                 HStack(spacing: 14) {
-                    countLabel("\(plan.completedCount)", "done", Theme.accent)
+                    countLabel("\(plan.completedCount)", "done", Theme.success)
                     countLabel("\(plan.plannedCount)", "to go", .white.opacity(0.8))
-                    if plan.skippedCount > 0 { countLabel("\(plan.skippedCount)", "skipped", .orange) }
+                    if plan.skippedCount > 0 { countLabel("\(plan.skippedCount)", "skipped", Theme.warning) }
                 }
                 .font(.footnote)
 
@@ -362,7 +442,7 @@ struct TodayView: View {
                 HStack(spacing: 10) {
                     Button { Task { await rebalance() } } label: { Text("Rebalance week") }
                         .buttonStyle(PillButtonStyle(filled: false))
-                    Button { showPlanner = true } label: { Text("Edit week") }
+                    Button { openPlanner() } label: { Text("Edit week") }
                         .buttonStyle(PillButtonStyle(filled: false))
                 }
             }
@@ -384,12 +464,12 @@ struct TodayView: View {
                     }
                 }
                 HStack(spacing: 14) {
-                    countLabel("\(plan.completedCount)", "done", Theme.accent)
+                    countLabel("\(plan.completedCount)", "done", Theme.success)
                     countLabel("\(plan.plannedCount)", "to go", .white.opacity(0.8))
-                    if plan.missedCount > 0 { countLabel("\(plan.missedCount)", "missed", .orange) }
+                    if plan.missedCount > 0 { countLabel("\(plan.missedCount)", "missed", Theme.warning) }
                 }
                 .font(.footnote)
-                Button { showPlanner = true } label: { Text("Plan your week") }
+                Button { openPlanner() } label: { Text("Plan your week") }
                     .buttonStyle(PillButtonStyle(filled: true))
                 Button { showAdjust = true } label: { Text("Adjust this week") }
                     .buttonStyle(PillButtonStyle(filled: false))
@@ -420,11 +500,11 @@ struct TodayView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 if n.safety.isAggressive, let msg = n.safety.message {
                     HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.warning)
                         Text(msg).font(.footnote).foregroundStyle(.white.opacity(0.9))
                     }
                     .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 14).fill(.orange.opacity(0.12)))
+                    .background(RoundedRectangle(cornerRadius: 14).fill(Theme.warning.opacity(0.12)))
                 }
                 DisclosureGroup {
                     VStack(alignment: .leading, spacing: 6) {
@@ -458,38 +538,32 @@ struct TodayView: View {
         GlassCard {
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
-                    cardTitle("Today’s meals", systemImage: "takeoutbag.and.cup.and.straw")
+                    cardTitle("Today’s meals", systemImage: "fork.knife")
                     Spacer()
                     Text("\(mp.dailyKcal.formatted()) kcal")
                         .font(.caption.weight(.semibold)).foregroundStyle(.white.opacity(0.7)).monospacedDigit()
                 }
                 ForEach(mp.meals) { meal in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Circle().fill(mealStatusColor(meal.status)).frame(width: 8, height: 8)
-                            Text(meal.name).font(.subheadline.weight(.semibold))
-                                .foregroundStyle(meal.status == "skipped" ? .white.opacity(0.45) : .white)
-                            Spacer()
-                            Text("\(meal.kcal) kcal").font(.subheadline).foregroundStyle(.white.opacity(0.75)).monospacedDigit()
-                            Menu {
-                                Button("Mark completed") { Task { await completeMeal(meal) } }
-                                Button("Skip") { Task { await skipMeal(meal) } }
-                            } label: {
-                                Image(systemName: "ellipsis.circle").foregroundStyle(.white.opacity(0.7))
-                            }
-                        }
-                        Text("\(meal.proteinG)P · \(meal.carbsG)C · \(meal.fatG)F · \(meal.fiberG) fiber")
-                            .font(.caption2).foregroundStyle(.white.opacity(0.6)).monospacedDigit()
-                        if let first = meal.suggestions.first {
-                            Text("Try: \(first)").font(.caption2).foregroundStyle(.white.opacity(0.5))
-                        }
-                    }
+                    MealTargetRow(
+                        icon: mealIcon(for: meal),
+                        title: meal.name,
+                        kcal: meal.kcal,
+                        proteinG: meal.proteinG,
+                        carbsG: meal.carbsG,
+                        fatG: meal.fatG,
+                        fiberG: meal.fiberG,
+                        status: meal.status,
+                        suggestion: meal.suggestions.first,
+                        onComplete: { Task { await completeMeal(meal) } },
+                        onSkip: { Task { await skipMeal(meal) } }
+                    )
                     if meal.id != mp.meals.last?.id { Divider().overlay(.white.opacity(0.08)) }
                 }
                 Text(mp.coachNote).font(.caption).italic().foregroundStyle(.white.opacity(0.6))
                     .fixedSize(horizontal: false, vertical: true)
-                Button { showMealPlanner = true } label: { Text("Adjust meal targets") }
+                Button { openMealPlanner() } label: { Text("Adjust meal targets") }
                     .buttonStyle(PillButtonStyle(filled: false))
+                mealRemindersButton
             }
         }
     }
@@ -497,16 +571,31 @@ struct TodayView: View {
     private func mealCTACard() -> some View {
         GlassCard {
             VStack(alignment: .leading, spacing: 12) {
-                cardTitle("Meal targets", systemImage: "takeoutbag.and.cup.and.straw")
+                HStack(spacing: 12) {
+                    SymbolBadge(systemName: "fork.knife", gradient: Theme.nutritionGradient, size: 40)
+                    Text("Meal targets")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(.white.opacity(0.7))
+                }
                 Text("Plan your meals")
                     .font(.title3.weight(.semibold)).foregroundStyle(.white)
                 Text("Split your daily target into breakfast, lunch and dinner — with simple portion ideas for your preferences.")
                     .font(.footnote).foregroundStyle(.white.opacity(0.7))
                     .fixedSize(horizontal: false, vertical: true)
-                Button { showMealPlanner = true } label: { Text("Plan meals") }
+                Button { openMealPlanner() } label: { Text("Plan meals") }
                     .buttonStyle(PillButtonStyle(filled: true))
+                mealRemindersButton
             }
         }
+    }
+
+    /// Maps a meal name to a fitting SF Symbol for its icon badge.
+    private func mealIcon(for m: MealTarget) -> String {
+        let n = m.name.lowercased()
+        if n.contains("break") { return "sunrise.fill" }
+        if n.contains("lunch") { return "sun.max.fill" }
+        if n.contains("dinner") { return "moon.stars.fill" }
+        if n.contains("snack") { return "leaf.fill" }
+        return "fork.knife"
     }
 
     // MARK: - Consistency coach card (demo only)
@@ -559,14 +648,14 @@ struct TodayView: View {
         Text(text).font(.caption.weight(.bold))
             .padding(.horizontal, 12).padding(.vertical, 6)
             .background(Capsule().fill(filled ? Theme.accent : .white.opacity(0.12)))
-            .foregroundStyle(filled ? .black : .white)
+            .foregroundStyle(filled ? Theme.onAccent : .white)
     }
 
     private func statusBadge(_ status: String) -> some View {
         let (label, color): (String, Color) = {
             switch status {
-            case "completed": return ("Completed", Theme.accent)
-            case "skipped": return ("Skipped", .orange)
+            case "completed": return ("Completed", Theme.success)
+            case "skipped": return ("Skipped", Theme.warning)
             default: return ("Planned", .white.opacity(0.7))
             }
         }()
@@ -620,9 +709,9 @@ struct TodayView: View {
 
     private func statusColor(_ status: String) -> Color {
         switch status {
-        case "completed": return Theme.accent
+        case "completed": return Theme.success
         case "today": return .white
-        case "missed": return .orange
+        case "missed": return Theme.warning
         case "rest": return .white.opacity(0.12)
         default: return .white.opacity(0.28)
         }
@@ -639,8 +728,8 @@ struct TodayView: View {
 
     private func realStatusColor(_ status: String?) -> Color {
         switch status {
-        case "completed": return Theme.accent
-        case "skipped": return .orange
+        case "completed": return Theme.success
+        case "skipped": return Theme.warning
         case .some: return .white.opacity(0.28)   // planned / rescheduled
         case nil: return .white.opacity(0.10)      // no session that day
         }
@@ -656,15 +745,15 @@ struct TodayView: View {
 
     private func mealStatusColor(_ status: String) -> Color {
         switch status {
-        case "completed": return Theme.accent
-        case "skipped": return .orange
+        case "completed": return Theme.success
+        case "skipped": return Theme.warning
         default: return .white.opacity(0.3)
         }
     }
 
     private func toast(_ text: String) -> some View {
         Text(text)
-            .font(.footnote.weight(.medium)).foregroundStyle(.black)
+            .font(.footnote.weight(.medium)).foregroundStyle(Theme.onAccent)
             .multilineTextAlignment(.center)
             .padding(.horizontal, 16).padding(.vertical, 12)
             .background(Capsule().fill(Theme.accent))
@@ -705,11 +794,22 @@ struct TodayView: View {
     private func completeScheduled(_ s: WeeklySession) async {
         if let updated = await plans.completeSession(s.id) {
             withAnimation { weeklyPlan = updated }
+            // Workout completed → celebrate. Cancel today's nag.
+            NotificationService.shared.cancelToday(.workout)
+            if updated.plannedCount == 0, updated.completedCount > 0 {
+                celebrate()   // weekly target achieved
+                flash("Weekly target hit — every planned session done. 🎉")
+            } else {
+                celebrate()
+                flash("Done — that’s consistency compounding. Nicely played.")
+            }
+        } else {
+            flash("Done — that’s consistency compounding. Nicely played.")
         }
-        flash("Done — that’s consistency compounding. Nicely played.")
     }
 
     private func handleReschedule(_ s: WeeklySession, _ action: RescheduleAction) async {
+        Haptics.warning()
         switch action {
         case .skip:
             if let u = await plans.skipSession(s.id) { withAnimation { weeklyPlan = u } }
@@ -727,18 +827,41 @@ struct TodayView: View {
     }
 
     private func rebalance() async {
+        Haptics.impact()
         if let u = await plans.rebalanceWeek() { withAnimation { weeklyPlan = u } }
         flash("Rebalanced — your remaining sessions are spread out.")
     }
 
     private func completeMeal(_ m: MealTarget) async {
-        if let u = await plans.completeMeal(m.id) { withAnimation { mealPlan = u } }
-        flash("\(m.name) logged. Protein first — you’re on target.")
+        if let u = await plans.completeMeal(m.id) {
+            withAnimation { mealPlan = u }
+            NotificationService.shared.cancelToday(mealReminderKind(for: m))
+            let allDone = !u.meals.isEmpty && u.meals.allSatisfy { $0.status == "completed" }
+            if allDone {
+                celebrate()
+                flash("All meals logged — that’s a perfect nutrition day. 🎉")
+            } else {
+                Haptics.success()
+                flash("\(m.name) logged. Protein first — you’re on target.")
+            }
+        } else {
+            Haptics.success()
+            flash("\(m.name) logged. Protein first — you’re on target.")
+        }
     }
 
     private func skipMeal(_ m: MealTarget) async {
+        Haptics.warning()
         if let u = await plans.skipMeal(m.id) { withAnimation { mealPlan = u } }
         flash("\(m.name) skipped — adjust the rest of the day if you’re hungry.")
+    }
+
+    /// Best-effort mapping of a meal to its reminder kind by name.
+    private func mealReminderKind(for m: MealTarget) -> ReminderKind {
+        let n = m.name.lowercased()
+        if n.contains("break") { return .breakfast }
+        if n.contains("lunch") { return .lunch }
+        return .dinner
     }
 
     private func applyStrategy(_ strategy: String) async {

@@ -7,42 +7,44 @@ struct AssessmentFlowView: View {
     var onFinish: () -> Void
 
     @State private var index = 0
-    private let total = 14
+    private let total = 15
 
     private var title: String {
         switch index {
-        case 0: return "What should we call you?"
-        case 1: return "How old are you?"
-        case 2: return "What is your gender?"
-        case 3: return "How tall are you?"
-        case 4: return "What is your current weight?"
-        case 5: return "What is your target weight?"
-        case 6: return "How active are you on most days?"
-        case 7: return "How much water do you drink daily?"
-        case 8: return "How many hours do you sleep?"
-        case 9: return "How often do you have bowel movements?"
-        case 10: return "What is your stool consistency?"
-        case 11: return "How often do you feel bloated?"
-        case 12: return "What is your main goal?"
+        case 0: return "First, what should we call you?"
+        case 1: return "First, your age"
+        case 2: return "What’s your gender?"
+        case 3: return "Your height"
+        case 4: return "Where are you starting?"
+        case 5: return "What’s your goal weight?"
+        case 6: return "How fast do you want to get there?"
+        case 7: return "How active are you on most days?"
+        case 8: return "How much water do you drink daily?"
+        case 9: return "How many hours do you sleep?"
+        case 10: return "How often do you have bowel movements?"
+        case 11: return "What is your stool consistency?"
+        case 12: return "How often do you feel bloated?"
+        case 13: return "What is your main goal?"
         default: return "Do any health flags apply to you?"
         }
     }
 
     private var helper: String {
         switch index {
-        case 0: return "We'll use this to personalize your report."
-        case 1: return "Used to estimate your gut age and calorie needs."
+        case 0: return "We'll use this to personalize your plan."
+        case 1: return "This helps DeskFit keep your plan realistic."
         case 2: return "Helps us calculate your metabolism accurately."
         case 3: return "Used for your healthy weight range."
-        case 4: return "Be honest — this stays private on your device."
-        case 5: return "Where you'd like to be. No pressure."
-        case 6: return "Think about a typical day, not your best day."
-        case 7: return "A rough daily average is fine."
-        case 8: return "Your usual nightly sleep."
-        case 9: return "A key signal of gut health."
-        case 10: return "Pick the closest match."
-        case 11: return "Bloating frequency tells us a lot about your gut."
-        case 12: return "We'll tailor your priorities around this."
+        case 4: return "This helps DeskFit set realistic food and workout targets."
+        case 5: return "We’ll keep the plan realistic and avoid extreme targets."
+        case 6: return "We’ll keep the pace safe and realistic."
+        case 7: return "Think about a typical day, not your best day."
+        case 8: return "A rough daily average is fine."
+        case 9: return "Your usual nightly sleep."
+        case 10: return "A key signal of gut health."
+        case 11: return "Pick the closest match."
+        case 12: return "Bloating frequency tells us a lot about your gut."
+        case 13: return "We'll tailor your priorities around this."
         default: return "Select all that apply, or None. This is not medical advice."
         }
     }
@@ -150,52 +152,48 @@ struct AssessmentFlowView: View {
                 .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
                 .submitLabel(.next)
         case 1:
-            bigStepper(
-                value: "\(state.profile.age)",
-                unit: "years",
-                onDec: { if state.profile.age > 15 { state.profile.age -= 1 } },
-                onInc: { if state.profile.age < 90 { state.profile.age += 1 } })
+            WheelValuePicker(
+                value: Binding(get: { Double(state.profile.age) },
+                               set: { state.profile.age = Int($0.rounded()) }),
+                range: 16...80, step: 1, unit: "years", hint: "Scroll to your age.")
         case 2:
             singleSelect($state.profile.gender, Gender.allCases) { $0.label }
         case 3:
-            bigStepper(
-                value: String(format: "%.0f", state.profile.heightCm),
-                unit: "cm",
-                onDec: { if state.profile.heightCm > 120 { state.profile.heightCm -= 1 } },
-                onInc: { if state.profile.heightCm < 220 { state.profile.heightCm += 1 } })
+            WheelValuePicker(value: $state.profile.heightCm,
+                             range: 130...220, step: 1, unit: "cm",
+                             hint: "Scroll to your height.")
         case 4:
-            bigStepper(
-                value: String(format: "%.1f", state.profile.weightKg),
-                unit: "kg",
-                onDec: { if state.profile.weightKg > 35 { state.profile.weightKg -= 0.5 } },
-                onInc: { if state.profile.weightKg < 200 { state.profile.weightKg += 0.5 } })
+            WheelValuePicker(value: $state.profile.weightKg,
+                             range: 35...180, step: 0.5, unit: "kg",
+                             hint: "Pick where you are today.", format: Self.smartFormat)
         case 5:
-            bigStepper(
-                value: String(format: "%.1f", state.profile.targetWeightKg),
-                unit: "kg",
-                onDec: { if state.profile.targetWeightKg > 35 { state.profile.targetWeightKg -= 0.5 } },
-                onInc: { if state.profile.targetWeightKg < 200 { state.profile.targetWeightKg += 0.5 } })
+            WheelValuePicker(value: $state.profile.targetWeightKg,
+                             range: 35...180, step: 0.5, unit: "kg",
+                             hint: "Now choose where you want to reach.", format: Self.smartFormat)
         case 6:
-            singleSelect($state.profile.activity, ActivityLevel.allCases) { $0.label }
+            WheelValuePicker(
+                value: Binding(get: { Double(state.profile.timelineMonths) },
+                               set: { state.profile.timelineMonths = Int($0.rounded()) }),
+                range: 1...12, step: 1, unit: "months",
+                hint: "A steady pace is easier to keep.")
         case 7:
-            bigStepper(
-                value: String(format: "%.1f", state.gutAnswers.waterLitres),
-                unit: "litres",
-                onDec: { if state.gutAnswers.waterLitres > 0 { state.gutAnswers.waterLitres -= 0.1 } },
-                onInc: { if state.gutAnswers.waterLitres < 6 { state.gutAnswers.waterLitres += 0.1 } })
+            singleSelect($state.profile.activity, ActivityLevel.allCases) { $0.label }
         case 8:
-            bigStepper(
-                value: String(format: "%.1f", state.gutAnswers.sleepHours),
-                unit: "hours",
-                onDec: { if state.gutAnswers.sleepHours > 3 { state.gutAnswers.sleepHours -= 0.5 } },
-                onInc: { if state.gutAnswers.sleepHours < 12 { state.gutAnswers.sleepHours += 0.5 } })
+            WheelValuePicker(value: $state.gutAnswers.waterLitres,
+                             range: 0...6, step: 0.1, unit: "litres",
+                             hint: "A rough daily average is fine.",
+                             format: { String(format: "%.1f", $0) })
         case 9:
-            singleSelect($state.gutAnswers.bowelFrequency, BowelFrequency.allCases) { $0.label }
+            WheelValuePicker(value: $state.gutAnswers.sleepHours,
+                             range: 3...12, step: 0.5, unit: "hours",
+                             hint: "Your usual nightly sleep.", format: Self.smartFormat)
         case 10:
-            singleSelect($state.gutAnswers.stoolConsistency, StoolConsistency.allCases) { $0.label }
+            singleSelect($state.gutAnswers.bowelFrequency, BowelFrequency.allCases) { $0.label }
         case 11:
-            singleSelect($state.gutAnswers.bloatingFrequency, BloatingFrequency.allCases) { $0.label }
+            singleSelect($state.gutAnswers.stoolConsistency, StoolConsistency.allCases) { $0.label }
         case 12:
+            singleSelect($state.gutAnswers.bloatingFrequency, BloatingFrequency.allCases) { $0.label }
+        case 13:
             singleSelect($state.profile.goal, Goal.allCases) { $0.label }
         default:
             flagGrid
@@ -204,32 +202,9 @@ struct AssessmentFlowView: View {
 
     // MARK: - Reusable controls
 
-    private func bigStepper(value: String, unit: String, onDec: @escaping () -> Void, onInc: @escaping () -> Void) -> some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 28) {
-                circleButton("minus", action: onDec)
-                VStack(spacing: 2) {
-                    Text(value)
-                        .font(.system(size: 46, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .monospacedDigit()
-                    Text(unit).font(.subheadline).foregroundStyle(.white.opacity(0.6))
-                }
-                .frame(minWidth: 130)
-                circleButton("plus", action: onInc)
-            }
-        }
-    }
-
-    private func circleButton(_ systemName: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 20, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 56, height: 56)
-                .background(.white.opacity(0.1), in: Circle())
-                .overlay(Circle().stroke(.white.opacity(0.15), lineWidth: 1))
-        }
+    /// Shows whole numbers without a trailing ".0" but keeps the half step.
+    static let smartFormat: (Double) -> String = { v in
+        v == v.rounded() ? String(Int(v)) : String(format: "%.1f", v)
     }
 
     private func singleSelect<T: Hashable & Identifiable>(
@@ -252,9 +227,9 @@ struct AssessmentFlowView: View {
                     .padding(.vertical, 15)
                     .frame(maxWidth: .infinity)
                     .background(
-                        selected ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(.white.opacity(0.08)),
+                        selected ? AnyShapeStyle(Theme.primaryButtonGradient) : AnyShapeStyle(.white.opacity(0.08)),
                         in: RoundedRectangle(cornerRadius: 14))
-                    .foregroundStyle(selected ? .black : .white)
+                    .foregroundStyle(selected ? Theme.onAccent : .white)
                 }
             }
         }
@@ -270,9 +245,9 @@ struct AssessmentFlowView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 12)
                         .background(
-                            selected ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(.white.opacity(0.08)),
+                            selected ? AnyShapeStyle(Theme.primaryButtonGradient) : AnyShapeStyle(.white.opacity(0.08)),
                             in: Capsule())
-                        .foregroundStyle(selected ? .black : .white)
+                        .foregroundStyle(selected ? Theme.onAccent : .white)
                 }
             }
         }

@@ -5,6 +5,8 @@ enum PersistenceKey: String {
     case gutAnswers
     case healthReport
     case onboardingComplete
+    /// Set when the user explicitly chose "Continue without account".
+    case guestMode
     // Real-user plan caches (NEVER used in demo mode — demo stays in-memory only,
     // keeping demo data fully separate from real user data).
     case weeklyPlanCache

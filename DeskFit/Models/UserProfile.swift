@@ -10,4 +10,7 @@ struct UserProfile: Codable, Equatable {
     var activity: ActivityLevel = .sedentary
     var goal: Goal = .generalHealth
     var medicalFlags: Set<MedicalFlag> = [.none]
+    /// How many months the user wants to reach their target weight in. Local-only
+    /// (not synced to the backend) — drives the realistic-pace projection.
+    var timelineMonths: Int = 4
 }

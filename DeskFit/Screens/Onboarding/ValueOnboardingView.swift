@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Premium 3-screen value introduction shown before the assessment.
+/// "How DeskFit works" — a polished 5-screen intro shown before the account
+/// choice and questionnaire. Plain language, SF Symbols, one idea per screen.
 struct ValueOnboardingView: View {
     var onContinue: () -> Void
 
@@ -15,19 +16,29 @@ struct ValueOnboardingView: View {
 
     private let pages: [Page] = [
         Page(
-            icon: "figure.seated.side",
-            title: "Know Your Gut Age",
-            body: "DeskFit helps desk-job professionals understand the gut and body signals that quietly build up from a sedentary 9-to-5 lifestyle."
+            icon: "deskclock.fill",
+            title: "Built around your workday",
+            body: "DeskFit adapts to a busy desk-job schedule — short, doable sessions that fit between meetings."
         ),
         Page(
-            icon: "chart.bar.doc.horizontal",
-            title: "Get Your Personal Report",
-            body: "See your BMI, BMR, TDEE, gut score, educational gut age, and the priority actions that matter most for you right now."
+            icon: "figure.run",
+            title: "Today’s workout, or a full week",
+            body: "Generate a single workout for today, or a weekly plan across the days you choose."
         ),
         Page(
-            icon: "sun.max.fill",
-            title: "Daily Support for Busy Professionals",
-            body: "Coming soon: a daily body reset with simple diet and workout support, designed to fit naturally around your desk job."
+            icon: "fork.knife",
+            title: "Simple meal targets",
+            body: "Plan your day by calories, protein, carbs, fat and fiber — with easy portion ideas, not strict recipes."
+        ),
+        Page(
+            icon: "bell.badge.fill",
+            title: "Gentle reminders",
+            body: "Schedule workout and meal reminders so the right thing happens at the right time."
+        ),
+        Page(
+            icon: "chart.xyaxis.line",
+            title: "See your progress",
+            body: "Track your path toward your goal weight with a clear, friendly progress chart."
         )
     ]
 
@@ -47,12 +58,9 @@ struct ValueOnboardingView: View {
                 .animation(.easeInOut(duration: 0.3), value: page)
 
                 VStack(spacing: 8) {
-                    Button(isLast ? "Start Assessment" : "Next") {
-                        if isLast {
-                            onContinue()
-                        } else {
-                            withAnimation { page += 1 }
-                        }
+                    Button(isLast ? "Get started" : "Next") {
+                        Haptics.selection()
+                        if isLast { onContinue() } else { withAnimation { page += 1 } }
                     }
                     .buttonStyle(PillButtonStyle(filled: true))
 
@@ -70,10 +78,21 @@ struct ValueOnboardingView: View {
     private func pageView(_ item: Page) -> some View {
         VStack(spacing: 24) {
             Spacer()
-            Image(systemName: item.icon)
-                .font(.system(size: 84))
-                .foregroundStyle(Theme.accent)
-                .shadow(color: Theme.accent.opacity(0.4), radius: 24)
+            ZStack {
+                Circle()
+                    .fill(Theme.primaryAccent.opacity(0.18))
+                    .frame(width: 168, height: 168)
+                    .blur(radius: 16)
+                Circle()
+                    .fill(.ultraThinMaterial)
+                    .frame(width: 140, height: 140)
+                    .overlay(Circle().stroke(Theme.divider, lineWidth: 1))
+                Image(systemName: item.icon)
+                    .font(.system(size: 64, weight: .semibold))
+                    .foregroundStyle(Theme.primaryButtonGradient)
+                    .symbolRenderingMode(.hierarchical)
+                    .shadow(color: Theme.primaryAccent.opacity(0.5), radius: 18)
+            }
 
             VStack(spacing: 14) {
                 Text(item.title)

@@ -18,10 +18,7 @@ struct AppleAuthRequest: Encodable {
     let fullName: String?
 }
 
-/// Matches backend GoogleAuthDto.
-struct GoogleAuthRequest: Encodable {
-    let idToken: String
-}
+// Google sign-in DTO removed — the iOS app no longer uses Google auth.
 
 // MARK: - Profile
 

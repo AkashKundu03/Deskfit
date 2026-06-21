@@ -98,7 +98,7 @@ struct OnboardingView: View {
                             selected ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(.white.opacity(0.08)),
                             in: Capsule()
                         )
-                        .foregroundStyle(selected ? .black : .white)
+                        .foregroundStyle(selected ? Theme.onAccent : .white)
                 }
             }
         }

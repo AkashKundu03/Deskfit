@@ -33,15 +33,8 @@ struct AuthService {
         tokenStore.saveToken(res.accessToken)
     }
 
-    func signInWithGoogle(idToken: String) async throws {
-        let res = try await client.post(
-            "auth/google",
-            body: GoogleAuthRequest(idToken: idToken),
-            authorized: false,
-            as: AuthResponse.self
-        )
-        tokenStore.saveToken(res.accessToken)
-    }
+    // Google sign-in has been removed from the iOS app. The backend route still
+    // exists for safety/compatibility, but the app never calls it.
 
     func logout() {
         tokenStore.clearToken()
