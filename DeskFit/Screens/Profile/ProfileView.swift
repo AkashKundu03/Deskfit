@@ -69,10 +69,10 @@ struct ProfileView: View {
             Text("Your report stays on this device. Sign back in anytime to sync across devices.")
         }
         .confirmationDialog("Retake assessment?", isPresented: $showResetConfirm, titleVisibility: .visible) {
-            Button("Reset", role: .destructive) { state.resetAssessment() }
+            Button("Retake") { state.retakeAssessment() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This clears your saved answers and report on this device.")
+            Text("Answer the questions again to update your plan. You'll stay signed in.")
         }
     }
 

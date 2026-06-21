@@ -49,6 +49,8 @@ struct AuthView: View {
                         .font(.system(size: 30, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
                         .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 24)
                     Text(subtitle)
                         .font(.subheadline)
                         .foregroundStyle(.white.opacity(0.72))

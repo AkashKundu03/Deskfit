@@ -14,6 +14,10 @@ final class AppState {
     private(set) var isGuest: Bool = false
     /// While true, the router shows the splash; we're resolving backend state.
     private(set) var isBootstrapping = true
+    /// While true, the router shows the questionnaire directly (used by "Retake
+    /// assessment" so the signed-in user stays logged in and goes straight to the
+    /// questions — no intro / account-choice / logout).
+    var isRetakingAssessment = false
     /// Drives the login gate: set true on logout so the router shows the sign-in
     /// screen without discarding the on-device report/profile.
     var requiresAuth: Bool = false
@@ -39,11 +43,27 @@ final class AppState {
 
     init() {
         let p = PersistenceService()
+
+        // ── Fresh-install / reinstall detection ──────────────────────────────
+        // iOS wipes UserDefaults on uninstall but KEEPS the Keychain. Without a
+        // marker, a deleted app would silently resume the old Keychain session and
+        // jump straight to Today. If the marker is missing, treat this as a fresh
+        // install: purge the stale Keychain token and any local user state so the
+        // app starts from the intro. Backend/Apple-account data is untouched.
+        if !p.flag(for: .installMarker) {
+            KeychainTokenStore.shared.clearToken()
+            p.clearAllUserState()
+            p.setFlag(true, for: .installMarker)
+        }
+
         self.profile = p.load(UserProfile.self, for: .userProfile) ?? UserProfile()
         self.gutAnswers = p.load(GutAnswers.self, for: .gutAnswers) ?? GutAnswers()
         self.report = p.load(HealthReport.self, for: .healthReport)
         self.onboardingComplete = p.flag(for: .onboardingComplete)
         self.isGuest = p.flag(for: .guestMode)
+        // `isAuthenticated`'s inline default read the Keychain BEFORE this body ran,
+        // so re-read after a possible fresh-install purge above.
+        self.isAuthenticated = KeychainTokenStore.shared.isAuthenticated
     }
 
     func refreshAuthState() {
@@ -53,6 +73,14 @@ final class AppState {
     /// True once the user has an assessment on this device.
     var hasLocalAssessment: Bool {
         onboardingComplete && report != nil
+    }
+
+    /// Whether the main app (Today/tabs) may be shown. A completed assessment is
+    /// not enough — the user must be either a signed-in Apple user OR an explicit
+    /// guest. This prevents a logged-out user (or stale cache) from landing on
+    /// Today without going through intro / account choice.
+    var canShowMainApp: Bool {
+        (isAuthenticated || isGuest) && onboardingComplete && report != nil
     }
 
     // MARK: - Launch bootstrap
@@ -159,14 +187,25 @@ final class AppState {
         }
     }
 
-    /// Logs out: clears the JWT and cached real-user plans, then routes to the
-    /// login screen. The user's report/profile stay on-device, and backend data
-    /// is never deleted — signing back in reloads everything.
+    /// Logs out: clears the JWT and ALL on-device real-user data (profile, gut
+    /// answers, report, plans), then routes to the login screen. Backend data is
+    /// never deleted — signing back in reloads everything from the account.
     func signOut() {
         AuthService().logout()
-        PersistenceService().clearPlanCaches()
+        clearLocalUserState()
         refreshAuthState()
         requiresAuth = true
+    }
+
+    /// Resets in-memory + persisted user state so a logged-out app shows no real
+    /// data. Does NOT touch backend or the install marker.
+    private func clearLocalUserState() {
+        profile = UserProfile()
+        gutAnswers = GutAnswers()
+        report = nil
+        onboardingComplete = false
+        isGuest = false
+        persistence.clearAllUserState()
     }
 
     /// Best-effort push of local data to the backend. Never blocks report
@@ -227,12 +266,16 @@ final class AppState {
         persistAll()
     }
 
-    func resetAssessment() {
+    /// "Retake assessment" — keeps the user signed in (or in guest mode) and sends
+    /// them straight to the questionnaire, pre-filled with their current answers.
+    /// Clears only the report + onboarding flag so the questions re-appear; the
+    /// auth token, guest status, profile, and gut answers are preserved. On finish,
+    /// the report is regenerated and (if signed in) re-synced — NOT a logout.
+    func retakeAssessment() {
         report = nil
         onboardingComplete = false
-        profile = UserProfile()
-        gutAnswers = GutAnswers()
-        persistence.clearAll()
+        isRetakingAssessment = true
+        persistence.clearReportAndOnboarding()
     }
 
     private func persistAll() {

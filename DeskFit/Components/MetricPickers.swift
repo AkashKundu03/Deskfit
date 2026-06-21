@@ -32,41 +32,42 @@ struct WheelValuePicker: View {
     }
 
     var body: some View {
-        GlassCard {
-            VStack(spacing: 8) {
-                // Large, readable selected value.
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(format(value))
-                        .font(.system(size: 54, weight: .bold, design: .rounded))
+        // Transparent / glass: no opaque card, so the dark background shows through
+        // the wheel for a native, premium look.
+        VStack(spacing: 8) {
+            // Large, readable selected value.
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(format(value))
+                    .font(.system(size: 54, weight: .bold, design: .rounded))
+                    .foregroundStyle(Theme.textPrimary)
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                Text(unit)
+                    .font(.title3.weight(.medium))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .animation(.snappy(duration: 0.2), value: value)
+
+            Picker("", selection: selectedIndex) {
+                ForEach(options.indices, id: \.self) { i in
+                    Text(format(options[i]))
+                        .font(.title3)
                         .foregroundStyle(Theme.textPrimary)
-                        .monospacedDigit()
-                        .contentTransition(.numericText())
-                    Text(unit)
-                        .font(.title3.weight(.medium))
-                        .foregroundStyle(Theme.textSecondary)
+                        .tag(i)
                 }
-                .animation(.snappy(duration: 0.2), value: value)
+            }
+            .pickerStyle(.wheel)
+            .frame(height: 160)
+            .background(.clear)
+            .accessibilityLabel("\(unit) picker")
+            .accessibilityValue("\(format(value)) \(unit)")
 
-                Picker("", selection: selectedIndex) {
-                    ForEach(options.indices, id: \.self) { i in
-                        Text(format(options[i]))
-                            .font(.title3)
-                            .foregroundStyle(Theme.textPrimary)
-                            .tag(i)
-                    }
-                }
-                .pickerStyle(.wheel)
-                .frame(height: 150)
-                .accessibilityLabel("\(unit) picker")
-                .accessibilityValue("\(format(value)) \(unit)")
-
-                if let hint {
-                    Text(hint)
-                        .font(.footnote)
-                        .foregroundStyle(Theme.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.top, 2)
-                }
+            if let hint {
+                Text(hint)
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 2)
             }
         }
     }

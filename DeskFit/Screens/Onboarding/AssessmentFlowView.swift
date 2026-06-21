@@ -152,10 +152,11 @@ struct AssessmentFlowView: View {
                 .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
                 .submitLabel(.next)
         case 1:
-            WheelValuePicker(
-                value: Binding(get: { Double(state.profile.age) },
-                               set: { state.profile.age = Int($0.rounded()) }),
-                range: 16...80, step: 1, unit: "years", hint: "Scroll to your age.")
+            bigStepper(
+                value: "\(state.profile.age)",
+                unit: "years",
+                onDec: { if state.profile.age > 16 { state.profile.age -= 1 } },
+                onInc: { if state.profile.age < 80 { state.profile.age += 1 } })
         case 2:
             singleSelect($state.profile.gender, Gender.allCases) { $0.label }
         case 3:
@@ -171,22 +172,25 @@ struct AssessmentFlowView: View {
                              range: 35...180, step: 0.5, unit: "kg",
                              hint: "Now choose where you want to reach.", format: Self.smartFormat)
         case 6:
-            WheelValuePicker(
-                value: Binding(get: { Double(state.profile.timelineMonths) },
-                               set: { state.profile.timelineMonths = Int($0.rounded()) }),
-                range: 1...12, step: 1, unit: "months",
-                hint: "A steady pace is easier to keep.")
+            bigStepper(
+                value: "\(state.profile.timelineMonths)",
+                unit: "months",
+                onDec: { if state.profile.timelineMonths > 1 { state.profile.timelineMonths -= 1 } },
+                onInc: { if state.profile.timelineMonths < 12 { state.profile.timelineMonths += 1 } })
         case 7:
             singleSelect($state.profile.activity, ActivityLevel.allCases) { $0.label }
         case 8:
-            WheelValuePicker(value: $state.gutAnswers.waterLitres,
-                             range: 0...6, step: 0.1, unit: "litres",
-                             hint: "A rough daily average is fine.",
-                             format: { String(format: "%.1f", $0) })
+            bigStepper(
+                value: String(format: "%.1f", state.gutAnswers.waterLitres),
+                unit: "litres",
+                onDec: { if state.gutAnswers.waterLitres > 0 { state.gutAnswers.waterLitres -= 0.1 } },
+                onInc: { if state.gutAnswers.waterLitres < 6 { state.gutAnswers.waterLitres += 0.1 } })
         case 9:
-            WheelValuePicker(value: $state.gutAnswers.sleepHours,
-                             range: 3...12, step: 0.5, unit: "hours",
-                             hint: "Your usual nightly sleep.", format: Self.smartFormat)
+            bigStepper(
+                value: Self.smartFormat(state.gutAnswers.sleepHours),
+                unit: "hours",
+                onDec: { if state.gutAnswers.sleepHours > 3 { state.gutAnswers.sleepHours -= 0.5 } },
+                onInc: { if state.gutAnswers.sleepHours < 12 { state.gutAnswers.sleepHours += 0.5 } })
         case 10:
             singleSelect($state.gutAnswers.bowelFrequency, BowelFrequency.allCases) { $0.label }
         case 11:
@@ -205,6 +209,40 @@ struct AssessmentFlowView: View {
     /// Shows whole numbers without a trailing ".0" but keeps the half step.
     static let smartFormat: (Double) -> String = { v in
         v == v.rounded() ? String(Int(v)) : String(format: "%.1f", v)
+    }
+
+    /// Large value with minus / plus circle buttons (used for age, months, water,
+    /// sleep). Light haptic on each tap.
+    private func bigStepper(value: String, unit: String,
+                            onDec: @escaping () -> Void, onInc: @escaping () -> Void) -> some View {
+        HStack(spacing: 28) {
+            circleButton("minus", action: onDec)
+            VStack(spacing: 2) {
+                Text(value)
+                    .font(.system(size: 46, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                Text(unit).font(.subheadline).foregroundStyle(.white.opacity(0.6))
+            }
+            .frame(minWidth: 130)
+            .animation(.snappy(duration: 0.2), value: value)
+            circleButton("plus", action: onInc)
+        }
+    }
+
+    private func circleButton(_ systemName: String, action: @escaping () -> Void) -> some View {
+        Button {
+            Haptics.selection()
+            action()
+        } label: {
+            Image(systemName: systemName)
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 56, height: 56)
+                .background(.white.opacity(0.1), in: Circle())
+                .overlay(Circle().stroke(.white.opacity(0.15), lineWidth: 1))
+        }
     }
 
     private func singleSelect<T: Hashable & Identifiable>(

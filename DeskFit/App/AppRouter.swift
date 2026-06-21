@@ -27,7 +27,14 @@ struct AppRouter: View {
                     onAppleOutcome: handleReloginOutcome,
                     onGuest: resumeAfterLogin
                 )
-            } else if state.onboardingComplete, state.report != nil {
+            } else if state.isRetakingAssessment {
+                // "Retake assessment": stay signed in, go straight to the questions
+                // (no intro / account choice / logout).
+                AssessmentFlowView(onFinish: finishRetake)
+            } else if state.canShowMainApp {
+                // Only a signed-in Apple user OR an explicit guest with a completed
+                // assessment reaches Today. A logged-out / fresh state falls through
+                // to the intro → account-choice flow below.
                 MainTabView()
             } else {
                 switch phase {
@@ -52,9 +59,10 @@ struct AppRouter: View {
         .animation(.easeInOut(duration: 0.35), value: phase)
         .task {
             await state.bootstrap()
-            // An authenticated user without an assessment resumes at the
-            // questionnaire (they already chose Apple on a previous session).
-            if state.isAuthenticated, !state.hasLocalAssessment {
+            // A signed-in Apple user, or a returning guest, who has no assessment
+            // yet resumes at the questionnaire (they already passed intro/account
+            // on a previous session). Everyone else starts at the intro.
+            if (state.isAuthenticated || state.isGuest), !state.hasLocalAssessment {
                 phase = .assessment
             }
         }
@@ -127,6 +135,15 @@ struct AppRouter: View {
     /// After the questionnaire: generate the report and (if signed in) sync it.
     private func finishAssessment() {
         state.generateReport()
+        Haptics.success()
+        if state.isAuthenticated { Task { await state.syncAll() } }
+    }
+
+    /// After a retake: regenerate the report, clear the retake flag (returns to
+    /// Today), and re-sync for signed-in users. The session is preserved.
+    private func finishRetake() {
+        state.generateReport()
+        state.isRetakingAssessment = false
         Haptics.success()
         if state.isAuthenticated { Task { await state.syncAll() } }
     }
