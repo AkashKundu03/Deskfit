@@ -23,10 +23,12 @@ struct AuthService {
 
     // MARK: - Social sign-in (primary user flow)
 
-    func signInWithApple(identityToken: String, email: String?, fullName: String?) async throws {
+    func signInWithApple(identityToken: String, email: String?, fullName: String?,
+                         authorizationCode: String?) async throws {
         let res = try await client.post(
             "auth/apple",
-            body: AppleAuthRequest(identityToken: identityToken, email: email, fullName: fullName),
+            body: AppleAuthRequest(identityToken: identityToken, email: email, fullName: fullName,
+                                   authorizationCode: authorizationCode),
             authorized: false,
             as: AuthResponse.self
         )

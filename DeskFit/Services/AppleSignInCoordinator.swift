@@ -5,6 +5,9 @@ struct AppleSignInResult {
     let identityToken: String
     let email: String?
     let fullName: String?
+    /// Authorization code — sent to the backend so it can capture a refresh token
+    /// for proper credential revocation at account deletion.
+    let authorizationCode: String?
 }
 
 /// Drives a native Sign in with Apple flow and returns the identity token.
@@ -54,11 +57,13 @@ final class AppleSignInCoordinator: NSObject,
 
         let nameParts = [credential.fullName?.givenName, credential.fullName?.familyName].compactMap { $0 }
         let fullName = nameParts.isEmpty ? nil : nameParts.joined(separator: " ")
+        let authCode = credential.authorizationCode.flatMap { String(data: $0, encoding: .utf8) }
 
         finish(.success(AppleSignInResult(
             identityToken: token,
             email: credential.email,
-            fullName: fullName
+            fullName: fullName,
+            authorizationCode: authCode
         )))
     }
 

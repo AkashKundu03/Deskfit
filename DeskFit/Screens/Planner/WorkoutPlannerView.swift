@@ -8,8 +8,8 @@ import SwiftUI
 
 struct WorkoutPlannerView: View {
     var initialFocus: String? = nil
-    /// Notifies Today so it can reflect the freshly generated single workout.
-    var onTodayWorkout: ((GeneratedWorkout) -> Void)? = nil
+    /// Notifies Today with the persisted single ("today only") workout.
+    var onTodayWorkout: ((StandaloneWorkout) -> Void)? = nil
     /// Notifies Today so it can reflect the freshly generated weekly plan.
     var onWeeklyCreated: ((WeeklyWorkoutPlan) -> Void)? = nil
 
@@ -31,6 +31,21 @@ struct WorkoutPlannerView: View {
     @State private var weeklyResult: WeeklyWorkoutPlan?
     @State private var completed = false
 
+    // Step-by-step wizard (one question per screen).
+    @State private var step = 0
+
+    private enum Step { case planType, days, location, time, equipment, focus, level }
+    private var steps: [Step] {
+        planType == .weekly
+            ? [.planType, .days, .location, .time, .equipment, .focus, .level]
+            : [.planType, .location, .time, .equipment, .focus, .level]
+    }
+    private var current: Step { steps[min(step, steps.count - 1)] }
+    private var isLastStep: Bool { step >= steps.count - 1 }
+    private var canAdvance: Bool {
+        current == .days ? !selectedWeekdays.isEmpty : true
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -40,7 +55,7 @@ struct WorkoutPlannerView: View {
                 } else if let result {
                     resultView(result)
                 } else {
-                    formView
+                    wizardView
                 }
             }
             .navigationTitle(navTitle)
@@ -59,55 +74,121 @@ struct WorkoutPlannerView: View {
         .preferredColorScheme(.dark)
     }
 
-    // MARK: - Form
+    // MARK: - Wizard (one question per screen)
 
-    private var formView: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                section("Plan") {
-                    segmented(PlanType.allCases, selection: $planType) { $0.label }
-                    if planType == .weekly {
-                        Text("Pick the days you’ll train — each day gets its own workout.")
-                            .font(.caption2).foregroundStyle(.white.opacity(0.55))
-                        weekdaySelector
+    private var wizardView: some View {
+        VStack(spacing: 0) {
+            ProgressView(value: Double(step + 1), total: Double(steps.count))
+                .tint(Theme.primaryAccent)
+                .padding(.horizontal, 24).padding(.top, 12)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(stepTitle)
+                        .font(.system(.title, design: .rounded, weight: .bold))
+                        .foregroundStyle(.white)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let helper = stepHelper {
+                        Text(helper).font(.subheadline).foregroundStyle(.white.opacity(0.65))
+                            .fixedSize(horizontal: false, vertical: true)
                     }
+                    stepControl
+                        .padding(.top, 12)
                 }
+                .padding(20)
+                .id(step) // re-trigger slide transition per step
+                .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
+                                        removal: .opacity))
+            }
 
-                section("Where are you training?") {
-                    chipGrid(PlannerLocation.allCases, isSelected: { $0 == location }) { location = $0 }
+            navBar
+        }
+        .animation(.easeInOut(duration: 0.25), value: step)
+    }
+
+    @ViewBuilder private var stepControl: some View {
+        switch current {
+        case .planType:
+            chipGrid(PlanType.allCases, isSelected: { $0 == planType }) { planType = $0 }
+        case .days:
+            weekdaySelector
+        case .location:
+            chipGrid(PlannerLocation.allCases, isSelected: { $0 == location }) { location = $0 }
+        case .time:
+            chipGrid(PlannerTime.allCases, isSelected: { $0 == time }) { time = $0 }
+        case .equipment:
+            VStack(alignment: .leading, spacing: 12) {
+                Button { selectFullGym() } label: {
+                    Label("I have a fully-equipped gym", systemImage: "dumbbell.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 12)
+                        .background(RoundedRectangle(cornerRadius: 14).fill(Theme.workoutGradient))
+                        .foregroundStyle(.white)
                 }
+                .buttonStyle(.plain)
+                chipGrid(PlannerEquipment.allCases, isSelected: { equipment.contains($0) }) { toggleEquipment($0) }
+                Text("Pick any you have — bodyweight is always available.")
+                    .font(.caption2).foregroundStyle(.white.opacity(0.5))
+            }
+        case .focus:
+            chipGrid(PlannerFocus.allCases, isSelected: { $0 == focus }) { focus = $0 }
+        case .level:
+            chipGrid(PlannerLevel.allCases, isSelected: { $0 == level }) { level = $0 }
+        }
+    }
 
-                section("How much time?") {
-                    chipGrid(PlannerTime.allCases, isSelected: { $0 == time }) { time = $0 }
-                }
+    private var stepTitle: String {
+        switch current {
+        case .planType: return "Today’s workout, or a full week?"
+        case .days: return "Which days will you train?"
+        case .location: return "Where are you training?"
+        case .time: return "How much time do you have?"
+        case .equipment: return "What equipment can you use?"
+        case .focus: return "What’s your focus?"
+        case .level: return "What’s your level?"
+        }
+    }
 
-                section("What do you have?") {
-                    chipGrid(PlannerEquipment.allCases, isSelected: { equipment.contains($0) }) { toggleEquipment($0) }
-                    Text("Pick one or more — bodyweight is always available.")
-                        .font(.caption2).foregroundStyle(.white.opacity(0.5))
-                }
+    private var stepHelper: String? {
+        switch current {
+        case .planType: return "A single session for today, or a distinct workout for each day you pick."
+        case .days: return "Pick one or more — each day gets its own workout, spaced for recovery."
+        case .location: return nil
+        case .time: return nil
+        case .equipment: return "Choose as many as you like."
+        case .focus: return "We’ll bias the exercises toward this."
+        case .level: return nil
+        }
+    }
 
-                section("Today’s focus") {
-                    chipGrid(PlannerFocus.allCases, isSelected: { $0 == focus }) { focus = $0 }
-                }
-
-                section("Your level") {
-                    segmented(PlannerLevel.allCases, selection: $level) { $0.label }
-                }
-
+    private var navBar: some View {
+        HStack(spacing: 12) {
+            if step > 0 {
+                Button("Back") { withAnimation { step -= 1 } }
+                    .buttonStyle(PillButtonStyle(filled: false))
+            }
+            if isLastStep {
                 Button { Task { await generate() } } label: {
                     HStack(spacing: 8) {
                         if generating { ProgressView().tint(Theme.onAccent) }
-                        Text(generating ? "Building…"
-                             : (planType == .weekly ? "Generate week plan" : "Generate workout"))
+                        Text(generating ? "Building…" : (planType == .weekly ? "Generate week plan" : "Generate workout"))
                     }
                 }
                 .buttonStyle(PillButtonStyle(filled: true))
                 .disabled(generating || (planType == .weekly && selectedWeekdays.isEmpty))
-                .padding(.top, 4)
+            } else {
+                Button("Next") { withAnimation { step += 1 } }
+                    .buttonStyle(PillButtonStyle(filled: true))
+                    .disabled(!canAdvance)
+                    .opacity(canAdvance ? 1 : 0.5)
             }
-            .padding(20)
         }
+        .padding(.horizontal, 20).padding(.bottom, 20)
+    }
+
+    private func selectFullGym() {
+        Haptics.selection()
+        equipment = Set(PlannerEquipment.allCases.filter { $0 != .none })
     }
 
     // MARK: - Result
@@ -281,7 +362,11 @@ struct WorkoutPlannerView: View {
             title: nil
         )
         let w = await coach.generate(req)
-        onTodayWorkout?(w)
+        // Persist it as today's standalone workout so its completion survives.
+        let saved = await plans.saveStandalone(StandaloneWorkoutRequest(
+            location: location.raw, durationMin: time.rawValue, equipment: eq,
+            focus: focus.raw, level: level.raw, title: nil, date: Weekdays.todayISO()))
+        onTodayWorkout?(saved)
         withAnimation { result = w; generating = false; completed = false }
     }
 
@@ -415,7 +500,9 @@ enum PlannerTime: Int, PlannerOption {
 }
 
 enum PlannerEquipment: String, PlannerOption {
-    case bodyweight, dumbbells, barbell, bench, resistanceBand, pullupBar, treadmill, cycle, none
+    case bodyweight, dumbbells, barbell, bench, resistanceBand, pullupBar, treadmill, cycle
+    case kettlebell, cable, machine, smithMachine, rowingMachine, jumpRope, medicineBall, trx
+    case none
     var id: String { rawValue }
     var raw: String { rawValue }
     var label: String {
@@ -423,7 +510,12 @@ enum PlannerEquipment: String, PlannerOption {
         case .bodyweight: return "Bodyweight"; case .dumbbells: return "Dumbbells"
         case .barbell: return "Barbell"; case .bench: return "Bench"
         case .resistanceBand: return "Band"; case .pullupBar: return "Pull-up bar"
-        case .treadmill: return "Treadmill"; case .cycle: return "Cycle"; case .none: return "None"
+        case .treadmill: return "Treadmill"; case .cycle: return "Cycle"
+        case .kettlebell: return "Kettlebell"; case .cable: return "Cable"
+        case .machine: return "Machines"; case .smithMachine: return "Smith machine"
+        case .rowingMachine: return "Rower"; case .jumpRope: return "Jump rope"
+        case .medicineBall: return "Med ball"; case .trx: return "TRX"
+        case .none: return "None"
         }
     }
 }

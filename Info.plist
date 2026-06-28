@@ -16,5 +16,11 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<!-- HealthKit (Phase 3) — optional. Reading is opt-in; raw data stays on
+	     device unless the user enables sync of daily aggregates. -->
+	<key>NSHealthShareUsageDescription</key>
+	<string>DeskFit can read your steps, workouts, sleep, and heart metrics to personalize and adapt your plan. This is optional — your data stays on your device unless you turn on sync.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>DeskFit can save your completed workouts to Apple Health. This is optional.</string>
 </dict>
 </plist>

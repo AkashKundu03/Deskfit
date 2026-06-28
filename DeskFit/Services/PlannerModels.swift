@@ -85,6 +85,37 @@ struct CreateWeeklyPlanRequest: Encodable {
 
 struct SessionActionRequest: Encodable { let sessionId: String }
 
+// MARK: - Standalone (today-only) workout
+
+/// A persisted "today only" workout (mirrors the backend StandaloneWorkout).
+struct StandaloneWorkout: Codable, Equatable, Identifiable {
+    let id: String
+    let date: String
+    var title: String
+    let focus: String
+    let focusLabel: String
+    var durationMin: Int
+    let location: String
+    let equipment: [String]
+    var estimatedCalories: Int
+    var warmup: [CoachExerciseItem]
+    var main: [CoachExerciseItem]
+    var coachNote: String
+    var status: String          // planned | completed | skipped
+}
+
+struct StandaloneWorkoutRequest: Encodable {
+    let location: String
+    let durationMin: Int
+    let equipment: [String]
+    let focus: String
+    let level: String
+    let title: String?
+    let date: String
+}
+
+struct StandaloneActionRequest: Encodable { let id: String }
+
 struct RescheduleSessionRequest: Encodable {
     let sessionId: String
     let toWeekday: String
@@ -109,6 +140,43 @@ struct MealActionRequest: Encodable { let mealId: String }
 
 struct EmptyBody: Encodable {}
 
+// MARK: - Fix my remaining week
+
+struct FixWeekRequest: Encodable {
+    let date: String
+    let unavailableDays: [String]
+}
+
+struct FixWeekChange: Codable, Equatable, Identifiable {
+    let sessionId: String
+    let title: String
+    let from: String
+    let to: String
+    var id: String { sessionId }
+}
+
+struct FixWeekBefore: Codable, Equatable {
+    let sessionId: String
+    let weekday: String
+    let status: String
+}
+
+/// Mirrors the backend `FixWeekResult` — the before/after audit of a fix.
+struct FixWeekResult: Codable, Equatable {
+    let before: [FixWeekBefore]
+    let after: [WeeklySession]
+    let changes: [FixWeekChange]
+    let feasible: Bool
+    let fallback: String?      // "shorten" | "skip" | "chooseMoreDays"
+    let reason: String?
+}
+
+/// Response shape of `POST workouts/fix-week/apply`.
+struct FixWeekApplyResponse: Codable, Equatable {
+    let plan: WeeklyWorkoutPlan
+    let result: FixWeekResult
+}
+
 // MARK: - Weekday helpers (shared by planner UI + local engine)
 
 enum Weekdays {
@@ -121,6 +189,17 @@ enum Weekdays {
     static func today() -> String {
         let map = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
         return map[Calendar.current.component(.weekday, from: Date()) - 1]
+    }
+
+    /// The user's LOCAL today as `yyyy-MM-dd` — the source of truth for matching a
+    /// session to "today" by DATE (not just weekday) and for telling the backend
+    /// which calendar week to resolve. Avoids the "last week's Monday" bug.
+    static func todayISO(_ date: Date = Date()) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = .current
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: date)
     }
 }
 

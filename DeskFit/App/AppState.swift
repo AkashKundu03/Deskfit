@@ -197,6 +197,25 @@ final class AppState {
         requiresAuth = true
     }
 
+    /// Delete the account: backend wipes all data + revokes Apple credentials.
+    /// On success, fully clear the device and route back to the intro.
+    @MainActor
+    func deleteAccount(reason: String?) async -> Bool {
+        let ok = await AccountService().deleteNow(reason: reason)
+        if ok {
+            AuthService().logout()       // discard the (now-useless) token
+            clearLocalUserState()
+            refreshAuthState()
+            requiresAuth = false
+        }
+        return ok
+    }
+
+    /// Schedule deletion in 7 days. Keeps the session so the user can recover.
+    func scheduleAccountDeletion(reason: String?) async -> Bool {
+        await AccountService().schedule(reason: reason)
+    }
+
     /// Resets in-memory + persisted user state so a logged-out app shows no real
     /// data. Does NOT touch backend or the install marker.
     private func clearLocalUserState() {

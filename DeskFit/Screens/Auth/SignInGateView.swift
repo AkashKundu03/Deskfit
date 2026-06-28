@@ -113,7 +113,8 @@ struct SignInGateView: View {
                 try await auth.signInWithApple(
                     identityToken: result.identityToken,
                     email: result.email,
-                    fullName: result.fullName)
+                    fullName: result.fullName,
+                    authorizationCode: result.authorizationCode)
                 let outcome = await state.handleAppleSignIn()
                 working = false
                 switch outcome {

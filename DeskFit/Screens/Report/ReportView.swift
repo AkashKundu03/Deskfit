@@ -29,6 +29,7 @@ struct ReportView: View {
 
                         coachIntroCard(report)
                         progressCard
+                        WellnessInsightCard()
                         nextActionCard
                         foodTargetCard(report)
                         weightRangeCard(report)

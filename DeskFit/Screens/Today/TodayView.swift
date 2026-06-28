@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DeskFit "Today" — a premium, coach-style dashboard that reflects the user's
@@ -10,22 +11,39 @@ import SwiftUI
 
 struct TodayView: View {
     @Environment(AppState.self) private var state
+    @Environment(\.scenePhase) private var scenePhase
+    /// The local day the visible plan was loaded for — used to detect rollover.
+    @State private var loadedDay = Weekdays.todayISO()
     private let coach = CoachService()
     private let plans = PlanService()
+    private let mealTemplate = MealTemplateService()
 
     @State private var today: TodayResponse?
     @State private var weeklyPlan: WeeklyWorkoutPlan?     // real day-wise plan
     @State private var mealPlan: MealPlanResult?
-    @State private var generatedWorkout: GeneratedWorkout? // today-only override
+    @State private var standalone: StandaloneWorkout? // today-only persisted workout
     @State private var demoWeekly: WeeklyPlan?             // demo "adjust" override
 
     @State private var workoutDone = false
     @State private var isLoading = true
     @State private var showPlanner = false
     @State private var showMealPlanner = false
+    // Phase 2 — repeating weekly meal template.
+    @State private var weeklyMeal: WeeklyMealPlanDTO?
+    @State private var showMealWizard = false
+    @State private var showMealWeek = false
+    @State private var thaliMeal: MealDTO?
     @State private var rescheduleSession: WeeklySession?
     @State private var banner: String?
     @State private var showAdjust = false
+
+    // Full workout-detail sheet (tappable days / "View full workout").
+    @State private var detail: WorkoutDetailData?
+    @State private var pendingRescheduleAfterDetail: WeeklySession?
+
+    // "Fix my remaining week" preview/confirm.
+    @State private var fixPreview: FixWeekResult?
+    @State private var showFixWeek = false
 
     // Engagement: sign-in gate for guests, celebration + reminders.
     @State private var showSignInGate = false
@@ -68,16 +86,24 @@ struct TodayView: View {
             if let banner { toast(banner) }
         }
         .task { await load() }
+        // Refresh when returning to the foreground (and after a day/timezone
+        // change), and tick once a minute to catch midnight while the app is open.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await refreshForCurrentDay() } }
+        }
+        .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in
+            if Weekdays.todayISO() != loadedDay { Task { await refreshForCurrentDay() } }
+        }
         .sheet(isPresented: $showPlanner, onDismiss: { Task { await reloadPlans() } }) {
             WorkoutPlannerView(
                 initialFocus: today?.workout.focus,
-                onTodayWorkout: { gw in
-                    generatedWorkout = gw; workoutDone = false
+                onTodayWorkout: { sa in
+                    standalone = sa
                     Haptics.impact()
                 },
                 onWeeklyCreated: { plan in
                     weeklyPlan = plan
-                    generatedWorkout = nil
+                    standalone = nil
                     Haptics.impact()
                     flash("Your week is set — \(plan.sessions.count) sessions ready.")
                 }
@@ -91,10 +117,40 @@ struct TodayView: View {
                 })
             }
         }
+        .sheet(isPresented: $showMealWizard) {
+            if let t = today {
+                MealWizardView(targets: t.nutrition, onCreated: { wm in weeklyMeal = wm })
+            }
+        }
+        .sheet(isPresented: $showMealWeek) {
+            if let wm = weeklyMeal { MealWeekView(plan: wm) }
+        }
+        .sheet(item: $thaliMeal) { meal in
+            ThaliEditorView(meal: meal, onUpdated: { wm in weeklyMeal = wm })
+        }
         .sheet(item: $rescheduleSession) { session in
             RescheduleSheet(session: session, allWeekdays: Weekdays.order) { action in
                 await handleReschedule(session, action)
             }
+        }
+        .sheet(isPresented: $showFixWeek) {
+            if let p = fixPreview {
+                FixWeekSheet(preview: p, onConfirm: { await confirmFixWeek() })
+            }
+        }
+        .sheet(item: $detail, onDismiss: {
+            if let s = pendingRescheduleAfterDetail {
+                pendingRescheduleAfterDetail = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { rescheduleSession = s }
+            }
+        }) { d in
+            WorkoutDetailSheet(
+                data: d,
+                onComplete: d.sessionId == nil ? nil : { Task { await completeBySessionId(d.sessionId!) } },
+                onSkip: d.sessionId == nil ? nil : { Task { await skipBySessionId(d.sessionId!) } },
+                onReschedule: d.sessionId == nil ? nil : { pendingRescheduleAfterDetail = sessionById(d.sessionId!) },
+                onRegenerate: d.sessionId == nil ? nil : { Task { await regenerateBySessionId(d.sessionId!) } }
+            )
         }
         .confirmationDialog("Adjust your week", isPresented: $showAdjust, titleVisibility: .visible) {
             ForEach(adjustOptions, id: \.0) { opt in
@@ -167,7 +223,7 @@ struct TodayView: View {
     private let adjustOptions: [(String, String)] = [
         ("move_today", "Move it to today"),
         ("shorter", "Create a shorter version"),
-        ("rebalance", "Rebalance this week"),
+        ("rebalance", "Fix my remaining week"),
         ("skip", "Skip and continue"),
     ]
 
@@ -226,8 +282,8 @@ struct TodayView: View {
 
     @ViewBuilder
     private func workoutSection(_ t: TodayResponse) -> some View {
-        if let gw = generatedWorkout {
-            generatedWorkoutCard(gw)
+        if let sa = standalone {
+            standaloneCard(sa)
         } else if let plan = weeklyPlan {
             if let s = todaySession(plan) {
                 scheduledCard(s)
@@ -260,10 +316,7 @@ struct TodayView: View {
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(s.exercises.prefix(3)) { ex in exerciseRow(ex) }
-                    if s.exercises.count > 3 {
-                        Text("+ \(s.exercises.count - 3) more")
-                            .font(.footnote).foregroundStyle(.white.opacity(0.5))
-                    }
+                    viewFullWorkoutButton(extra: s.exercises.count - 3) { detail = WorkoutDetailData(session: s) }
                 }
                 Text(s.coachNote).font(.footnote).italic().foregroundStyle(.white.opacity(0.7))
 
@@ -308,37 +361,38 @@ struct TodayView: View {
     }
 
     /// A freshly generated single workout (today-only).
-    private func generatedWorkoutCard(_ w: GeneratedWorkout) -> some View {
-        GlassCard {
+    private func standaloneCard(_ sa: StandaloneWorkout) -> some View {
+        let done = sa.status == "completed"
+        return GlassCard {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     cardTitle("Today’s workout", systemImage: "figure.run")
                     Spacer()
-                    Text("Just generated").font(.caption2.weight(.semibold)).foregroundStyle(Theme.accent)
+                    if done {
+                        statusBadge("completed")
+                    } else {
+                        Text("Just for today").font(.caption2.weight(.semibold)).foregroundStyle(Theme.accent)
+                    }
                 }
-                Text(w.title).font(.title3.weight(.semibold)).foregroundStyle(.white)
+                Text(sa.title).font(.title3.weight(.semibold)).foregroundStyle(.white)
                 HStack(spacing: 8) {
-                    metaChip("\(w.durationMin) min", "clock")
-                    metaChip(w.location.capitalized, "mappin.and.ellipse")
-                    metaChip("~\(w.estimatedCalories) kcal", "flame")
+                    metaChip("\(sa.durationMin) min", "clock")
+                    metaChip(sa.location.capitalized, "mappin.and.ellipse")
+                    metaChip("~\(sa.estimatedCalories) kcal", "flame")
                 }
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(w.main.prefix(3)) { ex in exerciseRow(ex) }
-                    if w.main.count > 3 {
-                        Text("+ \(w.main.count - 3) more").font(.footnote).foregroundStyle(.white.opacity(0.5))
-                    }
+                    ForEach(sa.main.prefix(3)) { ex in exerciseRow(ex) }
+                    viewFullWorkoutButton(extra: sa.main.count - 3) { detail = WorkoutDetailData(standalone: sa) }
                 }
-                Text(w.coachNote).font(.footnote).italic().foregroundStyle(.white.opacity(0.7))
+                Text(sa.coachNote).font(.footnote).italic().foregroundStyle(.white.opacity(0.7))
                 VStack(spacing: 10) {
                     Button {
-                        workoutDone = true
-                        celebrate()
-                        flash("Nice work — that’s another day your body and focus will thank you for.")
+                        Task { await completeStandalone(sa) }
                     } label: {
-                        Label(workoutDone ? "Completed" : "Mark completed",
-                              systemImage: workoutDone ? "checkmark.circle.fill" : "checkmark.circle")
+                        Label(done ? "Completed" : "Mark completed",
+                              systemImage: done ? "checkmark.circle.fill" : "checkmark.circle")
                     }
-                    .buttonStyle(PillButtonStyle(filled: true)).disabled(workoutDone)
+                    .buttonStyle(PillButtonStyle(filled: true)).disabled(done)
                     remindMeButton
                     Button { openPlanner() } label: { Text("Generate another") }
                         .buttonStyle(PillButtonStyle(filled: false))
@@ -346,6 +400,12 @@ struct TodayView: View {
                 .padding(.top, 4)
             }
         }
+    }
+
+    private func completeStandalone(_ sa: StandaloneWorkout) async {
+        if let u = await plans.completeStandalone(sa.id) { withAnimation { standalone = u } }
+        celebrate()
+        flash("Nice work — that’s another day your body and focus will thank you for.")
     }
 
     /// Default coach-suggested workout when there's no plan yet (with CTA).
@@ -365,9 +425,7 @@ struct TodayView: View {
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(t.workout.main.prefix(3)) { ex in exerciseRow(ex) }
-                    if t.workout.main.count > 3 {
-                        Text("+ \(t.workout.main.count - 3) more").font(.footnote).foregroundStyle(.white.opacity(0.5))
-                    }
+                    viewFullWorkoutButton(extra: t.workout.main.count - 3) { detail = WorkoutDetailData(generated: t.workout) }
                 }
                 Text(t.workout.coachNote).font(.footnote).italic().foregroundStyle(.white.opacity(0.7))
                 VStack(spacing: 10) {
@@ -425,7 +483,7 @@ struct TodayView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .contentShape(Rectangle())
-                        .onTapGesture { if let s, s.status != "completed" { rescheduleSession = s } }
+                        .onTapGesture { if let s { detail = WorkoutDetailData(session: s) } }
                     }
                 }
 
@@ -440,8 +498,10 @@ struct TodayView: View {
                     .font(.caption2).foregroundStyle(.white.opacity(0.5))
 
                 HStack(spacing: 10) {
-                    Button { Task { await rebalance() } } label: { Text("Rebalance week") }
-                        .buttonStyle(PillButtonStyle(filled: false))
+                    Button { Task { await openFixWeek() } } label: {
+                        Label("Fix my remaining week", systemImage: "wand.and.stars")
+                    }
+                    .buttonStyle(PillButtonStyle(filled: false))
                     Button { openPlanner() } label: { Text("Edit week") }
                         .buttonStyle(PillButtonStyle(filled: false))
                 }
@@ -527,10 +587,132 @@ struct TodayView: View {
 
     @ViewBuilder
     private func mealSection(_ t: TodayResponse) -> some View {
-        if let mp = mealPlan {
-            mealCard(mp)
+        if let wm = weeklyMeal {
+            weeklyMealCard(wm)
         } else {
             mealCTACard()
+        }
+    }
+
+    // MARK: - Weekly meal template (Phase 2)
+
+    private func weeklyMealCard(_ wm: WeeklyMealPlanDTO) -> some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    cardTitle("Today’s meals", systemImage: "fork.knife")
+                    Spacer()
+                    Text("\(wm.dailyKcal) kcal")
+                        .font(.caption.weight(.semibold)).foregroundStyle(.white.opacity(0.7)).monospacedDigit()
+                }
+                if let day = wm.today() {
+                    ForEach(day.meals) { meal in
+                        mealRow(meal, remainingSwaps: wm.remainingSwaps)
+                        if meal.id != day.meals.last?.id { Divider().overlay(.white.opacity(0.08)) }
+                    }
+                }
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                    Text("\(wm.remainingSwaps) of \(wm.swapLimit) meal swaps left this week")
+                }
+                .font(.caption).foregroundStyle(Theme.nutritionAccent)
+
+                HStack(spacing: 10) {
+                    Button { showMealWeek = true } label: { Text("See full week") }
+                        .buttonStyle(PillButtonStyle(filled: false))
+                    Button { openMealWizard() } label: { Text("Edit plan") }
+                        .buttonStyle(PillButtonStyle(filled: false))
+                }
+                mealRemindersButton
+            }
+        }
+    }
+
+    private func mealRow(_ meal: MealDTO, remainingSwaps: Int) -> some View {
+        let completed = meal.status == "completed"
+        let skipped = meal.status == "skipped"
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                SymbolBadge(systemName: mealSlotIcon(meal.slot), gradient: Theme.nutritionGradient, size: 38)
+                    .opacity(skipped ? 0.4 : 1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(meal.slot.capitalized)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(skipped ? Theme.textTertiary : .white)
+                    Text("\(meal.kcal) kcal · \(meal.proteinG)g protein")
+                        .font(.caption).foregroundStyle(.white.opacity(0.7)).monospacedDigit()
+                }
+                Spacer()
+                if completed {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.success)
+                } else {
+                    Menu {
+                        Button { Task { await completeWeeklyMeal(meal.id) } } label: { Label("Mark completed", systemImage: "checkmark.circle") }
+                        Button { thaliMeal = meal } label: { Label("Build your thali", systemImage: "slider.horizontal.3") }
+                        Button { Task { await regenerateWeeklyMeal(meal.id) } } label: { Label("Swap meal (\(remainingSwaps) left)", systemImage: "arrow.triangle.2.circlepath") }
+                        Button(role: .destructive) { Task { await skipWeeklyMeal(meal.id) } } label: { Label("Skip", systemImage: "xmark.circle") }
+                    } label: {
+                        Image(systemName: "ellipsis.circle").font(.title3).foregroundStyle(.white.opacity(0.7))
+                    }
+                }
+            }
+            // Food-level detail.
+            ForEach(meal.portions) { p in
+                HStack(spacing: 8) {
+                    Circle().fill(Theme.nutritionAccent.opacity(0.6)).frame(width: 5, height: 5)
+                    Text(p.name).font(.caption).foregroundStyle(.white.opacity(0.8))
+                    Spacer()
+                    Text("\(Int(p.grams))g · \(p.kcal) kcal")
+                        .font(.caption2).foregroundStyle(.white.opacity(0.55)).monospacedDigit()
+                }
+                .padding(.leading, 50)
+            }
+            Button { thaliMeal = meal } label: {
+                Label("Build your thali", systemImage: "slider.horizontal.3")
+                    .font(.caption2.weight(.semibold)).foregroundStyle(Theme.nutritionAccent)
+            }
+            .buttonStyle(.plain).padding(.leading, 50)
+        }
+    }
+
+    private func mealSlotIcon(_ slot: String) -> String {
+        switch slot {
+        case "breakfast": return "sunrise.fill"
+        case "lunch": return "sun.max.fill"
+        case "dinner": return "moon.stars.fill"
+        default: return "leaf.fill"
+        }
+    }
+
+    private func openMealWizard() { requirePlanAccess { showMealWizard = true } }
+
+    private func completeWeeklyMeal(_ id: String) async {
+        if let p = await mealTemplate.completeMeal(id) {
+            withAnimation { weeklyMeal = p }
+            let allDone = p.today()?.meals.allSatisfy { $0.status == "completed" } ?? false
+            if allDone { celebrate(); flash("All meals logged — perfect nutrition day. 🎉") }
+            else { Haptics.success(); flash("Logged. Protein first — you’re on target.") }
+        }
+    }
+
+    private func skipWeeklyMeal(_ id: String) async {
+        Haptics.warning()
+        if let p = await mealTemplate.skipMeal(id) { withAnimation { weeklyMeal = p } }
+        flash("Meal skipped — adjust the rest of your day if hungry.")
+    }
+
+    private func regenerateWeeklyMeal(_ id: String) async {
+        do {
+            let p = try await mealTemplate.regenerateMeal(id)
+            withAnimation { weeklyMeal = p }
+            Haptics.impact()
+            flash("Meal swapped — \(p.remainingSwaps) of \(p.swapLimit) swaps left this week.")
+        } catch {
+            if case APIError.server(let status, let message) = error, status == 409 {
+                flash(message)   // quota exhausted
+            } else {
+                flash("Couldn’t swap that meal — try again.")
+            }
         }
     }
 
@@ -578,10 +760,10 @@ struct TodayView: View {
                 }
                 Text("Plan your meals")
                     .font(.title3.weight(.semibold)).foregroundStyle(.white)
-                Text("Split your daily target into breakfast, lunch and dinner — with simple portion ideas for your preferences.")
+                Text("A repeating weekly plan with real portions — rice 150g, chicken 180g — built around your preferences.")
                     .font(.footnote).foregroundStyle(.white.opacity(0.7))
                     .fixedSize(horizontal: false, vertical: true)
-                Button { openMealPlanner() } label: { Text("Plan meals") }
+                Button { openMealWizard() } label: { Text("Plan my meals") }
                     .buttonStyle(PillButtonStyle(filled: true))
                 mealRemindersButton
             }
@@ -629,6 +811,21 @@ struct TodayView: View {
     }
 
     // MARK: - Reusable pieces
+
+    /// Opens the full workout-detail sheet. Shows the remaining-exercise count
+    /// when there are more than the 3 previewed.
+    private func viewFullWorkoutButton(extra: Int, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(extra > 0 ? "View full workout · +\(extra) more" : "View full workout")
+                Image(systemName: "chevron.right").font(.caption2.weight(.bold))
+            }
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(Theme.primaryAccent)
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 2)
+    }
 
     private func exerciseRow(_ ex: CoachExerciseItem) -> some View {
         HStack(spacing: 10) {
@@ -764,31 +961,79 @@ struct TodayView: View {
 
     // MARK: - Actions
 
+    /// Match by LOCAL DATE, not weekday — so today's card always reflects the
+    /// real calendar day even across week rollovers. Falls back to weekday for
+    /// older cached plans whose dates predate this fix.
     private func todaySession(_ plan: WeeklyWorkoutPlan) -> WeeklySession? {
-        plan.sessions.first { $0.weekday == Weekdays.today() }
+        let today = Weekdays.todayISO()
+        return plan.sessions.first { $0.date == today }
+            ?? plan.sessions.first { $0.weekday == Weekdays.today() }
+    }
+
+    private func sessionById(_ id: String) -> WeeklySession? {
+        weeklyPlan?.sessions.first { $0.id == id }
+    }
+
+    private func completeBySessionId(_ id: String) async {
+        if let s = sessionById(id) { await completeScheduled(s) }
+    }
+
+    private func skipBySessionId(_ id: String) async {
+        Haptics.warning()
+        if let u = await plans.skipSession(id) { withAnimation { weeklyPlan = u } }
+        flash("Skipped — no problem. Use “Fix my remaining week” to rebalance.")
+    }
+
+    private func regenerateBySessionId(_ id: String) async {
+        Haptics.impact()
+        if let u = await plans.regenerateSession(id) { withAnimation { weeklyPlan = u } }
+        flash("Fresh workout ready for that day.")
+    }
+
+    /// Foreground/midnight refresh. A full reload on a new day (so "today" rolls
+    /// over correctly); a lighter plan refresh otherwise.
+    private func refreshForCurrentDay() async {
+        if Weekdays.todayISO() != loadedDay {
+            await load()
+        } else {
+            await reloadPlans()
+        }
     }
 
     private func load() async {
         isLoading = true
+        loadedDay = Weekdays.todayISO()
         demoWeekly = nil
         workoutDone = false
-        generatedWorkout = nil
+        standalone = nil
         let result = await coach.today(profile: state.profile, timelineMonths: nil, missedWeekday: nil)
         let plan = await plans.currentWeeklyPlan()
         let meals = await plans.currentMealPlan()
+        let sa = await plans.currentStandalone()
+        let wm = await mealTemplate.current()
         withAnimation(.easeOut(duration: 0.3)) {
             today = result
             weeklyPlan = plan
             mealPlan = meals
+            standalone = sa
+            weeklyMeal = wm
             isLoading = false
         }
+        await PhoneWatchBridge.shared.syncToday()   // push today's plan to a paired Watch
     }
 
-    /// Refresh only the persisted plans (after the planner sheet closes).
+    /// Refresh only the persisted plans (after a planner sheet closes).
     private func reloadPlans() async {
         let plan = await plans.currentWeeklyPlan()
         let meals = await plans.currentMealPlan()
-        withAnimation { weeklyPlan = plan ?? weeklyPlan; mealPlan = meals ?? mealPlan }
+        let sa = await plans.currentStandalone()
+        let wm = await mealTemplate.current()
+        withAnimation {
+            weeklyPlan = plan ?? weeklyPlan
+            mealPlan = meals ?? mealPlan
+            standalone = sa ?? standalone
+            weeklyMeal = wm ?? weeklyMeal
+        }
     }
 
     private func completeScheduled(_ s: WeeklySession) async {
@@ -821,15 +1066,25 @@ struct TodayView: View {
             if let u = await plans.shorterSession(s.id) { withAnimation { weeklyPlan = u } }
             flash("Made today lighter — a shorter session still counts.")
         case .rebalance:
-            if let u = await plans.rebalanceWeek() { withAnimation { weeklyPlan = u } }
-            flash("Rebalanced — I spaced things out so nothing piles up.")
+            await openFixWeek()
         }
     }
 
-    private func rebalance() async {
+    /// Fetch a "Fix my remaining week" preview and present the confirmation sheet.
+    private func openFixWeek() async {
+        guard let preview = await plans.previewFixWeek() else {
+            flash("No active plan to fix yet.")
+            return
+        }
+        fixPreview = preview
+        showFixWeek = true
+    }
+
+    /// Apply the previewed fix after the user confirms.
+    private func confirmFixWeek() async {
         Haptics.impact()
-        if let u = await plans.rebalanceWeek() { withAnimation { weeklyPlan = u } }
-        flash("Rebalanced — your remaining sessions are spread out.")
+        if let u = await plans.applyFixWeek() { withAnimation { weeklyPlan = u } }
+        flash("Your remaining week is sorted — nothing piles up.")
     }
 
     private func completeMeal(_ m: MealTarget) async {

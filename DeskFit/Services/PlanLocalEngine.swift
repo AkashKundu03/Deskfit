@@ -166,9 +166,101 @@ enum PlanLocalEngine {
         return recounted(p)
     }
 
+    /// Regenerate ONE session's workout (guest/offline). Cycles the focus so the
+    /// user gets a genuinely different session; other days are untouched.
+    static func regenerate(_ plan: WeeklyWorkoutPlan, sessionId: String) -> WeeklyWorkoutPlan {
+        var p = plan
+        guard let i = p.sessions.firstIndex(where: { $0.id == sessionId }) else { return recounted(p) }
+        let s = p.sessions[i]
+        let order = ["strength", "cardio", "mobility", "balanced"]
+        let idx = order.firstIndex(of: s.focus) ?? -1
+        var next = order[(idx + 1 + order.count) % order.count]
+        if next == s.focus { next = order[(idx + 2 + order.count) % order.count] }
+        let w = CoachEngine.generate(focus: next, durationMin: s.durationMin,
+                                     location: s.location, equipment: s.equipment, level: "beginner")
+        // focus/focusLabel are `let`, so rebuild the session value.
+        p.sessions[i] = WeeklySession(
+            id: s.id, weekday: s.weekday, date: s.date, title: w.title,
+            focus: w.focus, focusLabel: w.focusLabel, durationMin: s.durationMin,
+            location: s.location, equipment: s.equipment, estimatedCalories: w.estimatedCalories,
+            warmup: w.warmup, exercises: w.main, coachNote: w.coachNote, status: "planned")
+        return recounted(p)
+    }
+
+    // MARK: - Standalone (today-only) workouts (guest/offline)
+
+    static func buildStandalone(location: String, durationMin: Int, equipment: [String],
+                                focus: String, level: String, title: String?, date: String) -> StandaloneWorkout {
+        let w = CoachEngine.generate(focus: focus, durationMin: durationMin, location: location,
+                                     equipment: equipment, level: level, title: title)
+        return StandaloneWorkout(
+            id: "local_sa_\(Int(Date().timeIntervalSince1970))",
+            date: date, title: w.title, focus: w.focus, focusLabel: w.focusLabel,
+            durationMin: w.durationMin, location: w.location, equipment: w.equipment,
+            estimatedCalories: w.estimatedCalories, warmup: w.warmup, main: w.main,
+            coachNote: w.coachNote, status: "planned")
+    }
+
+    static func setStandaloneStatus(_ s: StandaloneWorkout, status: String) -> StandaloneWorkout {
+        var p = s; p.status = status; return p
+    }
+
     /// The session scheduled for today, if any (used by Today's workout card).
     static func todaySession(_ plan: WeeklyWorkoutPlan) -> WeeklySession? {
         plan.sessions.first { $0.weekday == Weekdays.today() }
+    }
+
+    /// Local "Fix my remaining week" preview (guest/offline). Mirrors the backend
+    /// rules: only future planned sessions move, completed/skipped are untouched,
+    /// no double-booking, unavailable days respected; reports infeasible+fallback.
+    static func fixWeekPreview(_ plan: WeeklyWorkoutPlan, unavailableDays: [String]) -> FixWeekResult {
+        let monday = mondayOfThisWeek()
+        let order = Weekdays.order
+        let todayIdx = Weekdays.index(Weekdays.today())
+        let unavailable = Set(unavailableDays)
+        let before = plan.sessions.map {
+            FixWeekBefore(sessionId: $0.id, weekday: $0.weekday, status: $0.status)
+        }
+        func isFuturePlanned(_ s: WeeklySession) -> Bool {
+            (s.status == "planned" || s.status == "rescheduled") && Weekdays.index(s.weekday) > todayIdx
+        }
+        let movable = plan.sessions.filter(isFuturePlanned)
+        let fixed = plan.sessions.filter { !isFuturePlanned($0) }
+        if movable.isEmpty {
+            return FixWeekResult(before: before, after: plan.sessions, changes: [],
+                                 feasible: true, fallback: nil, reason: nil)
+        }
+        let occupied = Set(fixed.map { Weekdays.index($0.weekday) })
+        var candidates: [Int] = []
+        for i in (todayIdx + 1)..<order.count where !occupied.contains(i) && !unavailable.contains(order[i]) {
+            candidates.append(i)
+        }
+        if candidates.count < movable.count {
+            return FixWeekResult(before: before, after: plan.sessions, changes: [], feasible: false,
+                                 fallback: "chooseMoreDays",
+                                 reason: "Need \(movable.count) open day(s) after today, but only \(candidates.count) available.")
+        }
+        var chosen: [Int] = []
+        let step = Double(candidates.count) / Double(movable.count)
+        for i in 0..<movable.count { chosen.append(candidates[Int(Double(i) * step)]) }
+        let ordered = movable.sorted { Weekdays.index($0.weekday) < Weekdays.index($1.weekday) }
+        var moveTo: [String: Int] = [:]
+        for (i, s) in ordered.enumerated() { moveTo[s.id] = chosen[i] }
+
+        var changes: [FixWeekChange] = []
+        let after = plan.sessions.map { s -> WeeklySession in
+            guard let idx = moveTo[s.id] else { return s }
+            var ns = s
+            let newWeekday = order[idx]
+            if newWeekday != s.weekday {
+                changes.append(FixWeekChange(sessionId: s.id, title: s.title, from: s.weekday, to: newWeekday))
+            }
+            ns.weekday = newWeekday
+            ns.date = dateString(monday, weekdayIndex: idx)
+            ns.status = "rescheduled"
+            return ns
+        }
+        return FixWeekResult(before: before, after: after, changes: changes, feasible: true, fallback: nil, reason: nil)
     }
 
     private static func recounted(_ plan: WeeklyWorkoutPlan) -> WeeklyWorkoutPlan {

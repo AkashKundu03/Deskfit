@@ -49,12 +49,12 @@ struct RescheduleSheet: View {
                                   "A shorter version of the same focus.") {
                             run(.shorter)
                         }
-                        optionRow("arrow.triangle.2.circlepath", "Rebalance the week",
+                        optionRow("wand.and.stars", "Fix my remaining week",
                                   "Spread remaining sessions so nothing piles up.") {
                             run(.rebalance)
                         }
                         optionRow("xmark.circle", "Mark skipped",
-                                  "That’s okay. You can always rebalance later.") {
+                                  "That’s okay. You can fix your week later.") {
                             run(.skip)
                         }
                     }

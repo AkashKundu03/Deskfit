@@ -15,6 +15,8 @@ enum PersistenceKey: String {
     // keeping demo data fully separate from real user data).
     case weeklyPlanCache
     case mealPlanCache
+    case standaloneCache
+    case weeklyMealCache
 }
 
 struct PersistenceService {
@@ -56,7 +58,7 @@ struct PersistenceService {
 
     /// Clears only the cached plans.
     func clearPlanCaches() {
-        for key in [PersistenceKey.weeklyPlanCache, .mealPlanCache] {
+        for key in [PersistenceKey.weeklyPlanCache, .mealPlanCache, .standaloneCache, .weeklyMealCache] {
             defaults.removeObject(forKey: key.rawValue)
         }
     }
@@ -66,7 +68,7 @@ struct PersistenceService {
     /// logged-out or freshly-installed app never resumes stale local data.
     func clearAllUserState() {
         for key in [PersistenceKey.userProfile, .gutAnswers, .healthReport,
-                    .onboardingComplete, .guestMode, .weeklyPlanCache, .mealPlanCache] {
+                    .onboardingComplete, .guestMode, .weeklyPlanCache, .mealPlanCache, .standaloneCache, .weeklyMealCache] {
             defaults.removeObject(forKey: key.rawValue)
         }
     }

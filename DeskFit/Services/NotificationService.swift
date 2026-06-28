@@ -165,6 +165,27 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         center.removePendingNotificationRequests(withIdentifiers: [kind.rawValue])
     }
 
+    private let recoveryNudgeId = "recovery_nudge"
+
+    /// A discreet, opt-in recovery nudge. Generic copy only — never exposes any
+    /// health detail on the lock screen. Fires once, a few hours out.
+    func scheduleRecoveryNudge() async {
+        guard await requestAuthorizationIfNeeded() else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "DeskFit"
+        content.body = "Your recovery signals differ from usual. Open DeskFit to review today’s plan."
+        content.sound = .default
+        // No userInfo health details; deep-links to Today.
+        content.userInfo = ["reminderKind": ReminderKind.workout.rawValue]
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 3 * 60 * 60, repeats: false)
+        center.removePendingNotificationRequests(withIdentifiers: [recoveryNudgeId])
+        try? await center.add(UNNotificationRequest(identifier: recoveryNudgeId, content: content, trigger: trigger))
+    }
+
+    func cancelRecoveryNudge() {
+        center.removePendingNotificationRequests(withIdentifiers: [recoveryNudgeId])
+    }
+
     // MARK: - Scheduling
 
     private func schedule(_ kind: ReminderKind, hour: Int, minute: Int) {

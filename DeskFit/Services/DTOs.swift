@@ -16,6 +16,7 @@ struct AppleAuthRequest: Encodable {
     let identityToken: String
     let email: String?
     let fullName: String?
+    let authorizationCode: String?
 }
 
 // Google sign-in DTO removed — the iOS app no longer uses Google auth.

@@ -5,6 +5,7 @@ struct ProfileView: View {
     @State private var showResetConfirm = false
     @State private var showLogoutConfirm = false
     @State private var showReminders = false
+    @State private var showDeleteAccount = false
 
     var body: some View {
         ZStack {
@@ -16,6 +17,7 @@ struct ProfileView: View {
 
                     accountSyncCard
                     notificationsCard
+                    AppleHealthCard()
                     goalCard
                     bodyCard
                     lifestyleCard
@@ -50,6 +52,14 @@ struct ProfileView: View {
                         .foregroundStyle(.white.opacity(0.6))
                         .padding(.top, 2)
 
+                    // Account deletion — easy to find (only when signed in).
+                    if state.isAuthenticated {
+                        Button("Delete account") { showDeleteAccount = true }
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(Theme.danger.opacity(0.85))
+                            .padding(.top, 2)
+                    }
+
                     Text(HealthReport.disclaimer)
                         .font(.footnote)
                         .foregroundStyle(.white.opacity(0.55))
@@ -62,6 +72,7 @@ struct ProfileView: View {
             }
         }
         .sheet(isPresented: $showReminders) { ReminderSettingsView() }
+        .sheet(isPresented: $showDeleteAccount) { DeleteAccountView().environment(state) }
         .confirmationDialog("Log out?", isPresented: $showLogoutConfirm, titleVisibility: .visible) {
             Button("Log out", role: .destructive) { state.signOut() }
             Button("Cancel", role: .cancel) {}
